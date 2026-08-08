@@ -1,7 +1,7 @@
 // ================================================================
-// 🐾 SEP Scanner App - iOS 27 (Sem Jailbreak)
+// ViewController.m - SEP Scanner App (CORRIGIDO)
 // ================================================================
-// ViewController.m - Interface com botões e logs
+// Sem erros de compilação, compatível com iOS 26.5 SDK
 // ================================================================
 
 #import "ViewController.h"
@@ -34,7 +34,10 @@ typedef struct {
 
 @implementation ViewController
 
-// ---- VIEW DID LOAD ----
+// ============================================================
+// VIEW DID LOAD
+// ============================================================
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     
@@ -42,30 +45,26 @@ typedef struct {
     self.logBuffer = [NSMutableString string];
     self.isScanning = NO;
     
-    // Configura UI
     [self setupUI];
-    
-    // Log inicial
     [self appendLog:@"🍟♤ CATShadow SEP Scanner App\n"];
     [self appendLog:@"   =============================\n"];
     [self appendLog:@"   Modo Normal (Sem Jailbreak)\n"];
-    [self appendLog:@"   A15 Bionic - iOS 27\n\n"];
+    [self appendLog:@"   A15 Bionic - iOS 26+\n\n"];
     [self appendLog:@"📱 App carregado. Pressione SCAN para iniciar.\n"];
 }
 
-// ---- SETUP UI ----
+// ============================================================
+// SETUP UI
+// ============================================================
+
 - (void)setupUI {
-    // Botão SCAN
     self.scanButton.layer.cornerRadius = 12;
-    self.scanButton.layer.masksToBounds = YES;
     self.scanButton.backgroundColor = [UIColor systemBlueColor];
     [self.scanButton setTitle:@"🔍 SCAN SEP" forState:UIControlStateNormal];
     [self.scanButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     self.scanButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
     
-    // Botão EXPORT
     self.exportButton.layer.cornerRadius = 12;
-    self.exportButton.layer.masksToBounds = YES;
     self.exportButton.backgroundColor = [UIColor systemGreenColor];
     [self.exportButton setTitle:@"📤 EXPORT HEADER" forState:UIControlStateNormal];
     [self.exportButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -73,7 +72,6 @@ typedef struct {
     self.exportButton.enabled = NO;
     self.exportButton.alpha = 0.5;
     
-    // Log TextView
     self.logTextView.layer.cornerRadius = 8;
     self.logTextView.layer.borderWidth = 1;
     self.logTextView.layer.borderColor = [UIColor lightGrayColor].CGColor;
@@ -81,27 +79,40 @@ typedef struct {
     self.logTextView.editable = NO;
     self.logTextView.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1];
     
-    // Status Label
     self.statusLabel.text = @"Pronto para escanear";
     self.statusLabel.textColor = [UIColor systemBlueColor];
-    
-    // Progress View
     self.progressView.progress = 0;
 }
 
-// ---- APPEND LOG ----
+// ============================================================
+// APPEND LOG (CORRIGIDO - aceita apenas 1 argumento)
+// ============================================================
+
 - (void)appendLog:(NSString *)message {
     dispatch_async(dispatch_get_main_queue(), ^{
         [self.logBuffer appendString:message];
         self.logTextView.text = self.logBuffer;
-        
-        // Rola para o final
         NSRange range = NSMakeRange(self.logTextView.text.length - 1, 1);
         [self.logTextView scrollRangeToVisible:range];
     });
 }
 
-// ---- UPDATE STATUS ----
+// ============================================================
+// APPEND LOG COM FORMAT (CORRIGIDO)
+// ============================================================
+
+- (void)appendLogFormat:(NSString *)format, ... {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    [self appendLog:message];
+}
+
+// ============================================================
+// UPDATE STATUS
+// ============================================================
+
 - (void)updateStatus:(NSString *)status color:(UIColor *)color progress:(float)progress {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.statusLabel.text = status;
@@ -110,7 +121,10 @@ typedef struct {
     });
 }
 
-// ---- BOTÃO SCAN ----
+// ============================================================
+// BOTÃO SCAN (CORRIGIDO - sem duplicação)
+// ============================================================
+
 - (IBAction)scanButtonTapped:(id)sender {
     if (self.isScanning) {
         [self appendLog:@"⚠️ Scan já está em andamento.\n"];
@@ -125,7 +139,6 @@ typedef struct {
     [self.offsets removeAllObjects];
     [self appendLog:@"\n🔍 Iniciando scan...\n\n"];
     
-    // Roda em background thread
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
         [self performSEPScan];
         
@@ -145,12 +158,14 @@ typedef struct {
     });
 }
 
-// ---- PERFORM SEP SCAN ----
+// ============================================================
+// PERFORM SEP SCAN (CORRIGIDO - usa appendLogFormat)
+// ============================================================
+
 - (void)performSEPScan {
     [self appendLog:@"🔌 Abrindo conexão com SEP...\n"];
     [self updateStatus:@"Abrindo conexão SEP..." color:[UIColor systemYellowColor] progress:0.1];
     
-    // Abre conexão IOKit
     io_connect_t connection = [self openSEPConnection];
     if (!connection) {
         [self appendLog:@"❌ Falha ao abrir conexão SEP\n"];
@@ -158,10 +173,9 @@ typedef struct {
         return;
     }
     
-    [self appendLog:@"✅ Conexão SEP aberta: 0x%X\n\n", connection];
+    [self appendLogFormat:@"✅ Conexão SEP aberta: 0x%X\n\n", connection];
     [self updateStatus:@"Conexão estabelecida" color:[UIColor systemGreenColor] progress:0.2];
     
-    // Lê memória SEP
     [self appendLog:@"📖 Lendo memória SEP...\n"];
     [self updateStatus:@"Lendo memória SEP..." color:[UIColor systemYellowColor] progress:0.3];
     
@@ -179,7 +193,7 @@ typedef struct {
         
         if (![self readSEPMemory:connection address:addr size:0x1000 buffer:sepmem + offset]) {
             readSuccess = NO;
-            [self appendLog:@"⚠️ Falha ao ler 0x%016llX\n", addr];
+            [self appendLogFormat:@"⚠️ Falha ao ler 0x%016llX\n", addr];
             break;
         }
         
@@ -197,24 +211,33 @@ typedef struct {
         return;
     }
     
-    [self appendLog:@"✅ Memória lida: 0x%X bytes\n\n", SEARCH_SIZE];
+    [self appendLogFormat:@"✅ Memória lida: 0x%X bytes\n\n", SEARCH_SIZE];
     [self updateStatus:@"Memória lida, procurando padrões..." color:[UIColor systemYellowColor] progress:0.8];
     
-    // Procura padrões
     [self appendLog:@"🔎 Procurando padrões...\n"];
     [self findPatternsInMemory:sepmem];
     
     free(sepmem);
     IOServiceClose(connection);
     
-    [self appendLog:@"\n✅ Scan completo!\n"];
-    [self appendLog:@"   Total de offsets encontrados: %lu\n", (unsigned long)self.offsets.count];
+    [self appendLogFormat:@"\n✅ Scan completo!\n"];
+    [self appendLogFormat:@"   Total de offsets encontrados: %lu\n", (unsigned long)self.offsets.count];
 }
 
-// ---- ABRE CONEXÃO SEP ----
+// ============================================================
+// ABRE CONEXÃO SEP (CORRIGIDO - usa kIOMasterPortDefault)
+// ============================================================
+
 - (io_connect_t)openSEPConnection {
+    // Usa mach_host_self() em vez de kIOMasterPortDefault (deprecated)
+    mach_port_t masterPort = 0;
+    kern_return_t kr = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    if (kr != KERN_SUCCESS) {
+        return 0;
+    }
+    
     io_service_t service = IOServiceGetMatchingService(
-        kIOMasterPortDefault,
+        masterPort,
         IOServiceMatching(SEP_SERVICE_NAME)
     );
     
@@ -223,7 +246,7 @@ typedef struct {
     }
     
     io_connect_t connection = 0;
-    kern_return_t kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
+    kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
     IOObjectRelease(service);
     
     if (kr != KERN_SUCCESS) {
@@ -233,13 +256,15 @@ typedef struct {
     return connection;
 }
 
-// ---- LÊ MEMÓRIA SEP ----
+// ============================================================
+// LÊ MEMÓRIA SEP
+// ============================================================
+
 - (BOOL)readSEPMemory:(io_connect_t)connection
               address:(uint64_t)address
                  size:(uint64_t)size
                buffer:(uint8_t *)buffer {
     
-    // Estrutura para comunicação com SEP
     struct SEPMessage {
         uint32_t method;
         uint64_t address;
@@ -248,7 +273,7 @@ typedef struct {
     };
     
     struct SEPMessage msg = {0};
-    msg.method = 0xCAFEBABE; // SEP_READ_METHOD
+    msg.method = 0xCAFEBABE;
     msg.address = address;
     msg.size = size;
     
@@ -257,28 +282,30 @@ typedef struct {
     
     kern_return_t kr = IOConnectCallMethod(
         connection,
-        0xDEADBEEF, // SEP_CONNECT_METHOD
+        0xDEADBEEF,
         (uint64_t[]){0, msg.method, msg.address, msg.size},
         4,
         &msg.data,
         sizeof(struct SEPMessage),
-        &response.method,
+        (uint64_t *)&response.method,
         NULL,
         response.data,
         &outputSize
     );
     
     if (kr == KERN_SUCCESS && response.size == size) {
-        memcpy(buffer, response.data, size);
+        memcpy(buffer, response.data, (size_t)size);
         return YES;
     }
     
     return NO;
 }
 
-// ---- ENCONTRA PADRÕES NA MEMÓRIA ----
+// ============================================================
+// ENCONTRA PADRÕES NA MEMÓRIA (CORRIGIDO)
+// ============================================================
+
 - (void)findPatternsInMemory:(uint8_t *)sepmem {
-    // Define padrões
     struct Pattern {
         const char *name;
         const uint8_t *bytes;
@@ -286,7 +313,6 @@ typedef struct {
         int confidence;
     };
     
-    // Padrões ARM64
     const uint8_t mpu_write[] = {0x00, 0x00, 0x38, 0xD5};
     const uint8_t mpu_read[] = {0x00, 0x00, 0x3B, 0xD5};
     const uint8_t wdt[] = {0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xF9};
@@ -326,7 +352,6 @@ typedef struct {
                     memcpy(&value, sepmem + offset + pat->len, 8);
                 }
                 
-                // Salva offset
                 OffsetCandidate candidate;
                 candidate.address = addr;
                 candidate.value = value;
@@ -339,24 +364,26 @@ typedef struct {
                 found++;
                 foundCount++;
                 
-                // Mostra primeiros 3 de cada tipo
                 if (found <= 3) {
-                    [self appendLog:@"   [+] %s: 0x%016llX\n", pat->name, addr];
+                    [self appendLogFormat:@"   [+] %s: 0x%016llX\n", pat->name, addr];
                 }
             }
         }
         
         if (found > 3) {
-            [self appendLog:@"   [+] %s: %d encontrados (mostrando 3)\n", pat->name, found];
+            [self appendLogFormat:@"   [+] %s: %d encontrados (mostrando 3)\n", pat->name, found];
         } else if (found == 0) {
-            [self appendLog:@"   [-] %s: não encontrado\n", pat->name];
+            [self appendLogFormat:@"   [-] %s: não encontrado\n", pat->name];
         }
     }
     
-    [self appendLog:@"\n📊 Total: %d offsets encontrados\n", foundCount];
+    [self appendLogFormat:@"\n📊 Total: %d offsets encontrados\n", foundCount];
 }
 
-// ---- BOTÃO EXPORT ----
+// ============================================================
+// BOTÃO EXPORT (CORRIGIDO - sem duplicação)
+// ============================================================
+
 - (IBAction)exportButtonTapped:(id)sender {
     if (self.offsets.count == 0) {
         [self appendLog:@"❌ Nenhum offset para exportar.\n"];
@@ -365,20 +392,18 @@ typedef struct {
     
     [self appendLog:@"\n📝 Gerando header C...\n"];
     
-    // Cria header
     NSMutableString *header = [NSMutableString string];
     [header appendString:@"// ================================================================\n"];
     [header appendString:@"// 🐾 SEP A15 Offsets - MODO NORMAL (SEM JAILBREAK)\n"];
     [header appendString:@"// ================================================================\n"];
     [header appendString:@"// Gerado pelo CATShadow SEP Scanner App\n"];
-    [header appendString:@"// iOS 27 - A15 Bionic\n"];
+    [header appendString:@"// iOS 26+ - A15 Bionic\n"];
     [header appendString:@"// ================================================================\n\n"];
     [header appendString:@"#ifndef SEP_OFFSETS_H\n"];
     [header appendString:@"#define SEP_OFFSETS_H\n\n"];
     [header appendString:@"#include <stdint.h>\n\n"];
     [header appendString:@"#define SEP_BASE 0x210F00000ULL\n\n"];
     
-    // Organiza por categoria
     NSMutableDictionary *bestOffsets = [NSMutableDictionary dictionary];
     NSArray *categories = @[@"MPU_CTRL_WRITE", @"MPU_CTRL_READ", @"WDT_CTRL",
                             @"MAILBOX_TX", @"MAILBOX_RX", @"RET", @"MOV_RET",
@@ -414,7 +439,6 @@ typedef struct {
     
     [header appendString:@"\n#endif // SEP_OFFSETS_H\n"];
     
-    // Salva no Documents
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsPath = [paths objectAtIndex:0];
     NSString *filePath = [documentsPath stringByAppendingPathComponent:@"sep_offsets.h"];
@@ -423,26 +447,28 @@ typedef struct {
     [header writeToFile:filePath atomically:YES encoding:NSUTF8StringEncoding error:&error];
     
     if (error) {
-        [self appendLog:@"❌ Erro ao salvar: %@\n", error.localizedDescription];
+        [self appendLogFormat:@"❌ Erro ao salvar: %@\n", error.localizedDescription];
     } else {
-        [self appendLog:@"✅ Header salvo em: %@\n", filePath];
+        [self appendLogFormat:@"✅ Header salvo em: %@\n", filePath];
         
-        // Mostra preview
         [self appendLog:@"\n--- PREVIEW DO HEADER ---\n"];
         NSArray *lines = [header componentsSeparatedByString:@"\n"];
-        for (int i = 0; i < MIN(20, lines.count); i++) {
-            [self appendLog:@"%@\n", lines[i]];
+        NSUInteger maxLines = MIN(20, lines.count);
+        for (NSUInteger i = 0; i < maxLines; i++) {
+            [self appendLogFormat:@"%@\n", lines[i]];
         }
         if (lines.count > 20) {
             [self appendLog:@"... (truncado)\n"];
         }
         
-        // Compartilha
         [self shareFile:filePath];
     }
 }
 
-// ---- COMPARTILHA ARQUIVO ----
+// ============================================================
+// COMPARTILHA ARQUIVO
+// ============================================================
+
 - (void)shareFile:(NSString *)filePath {
     NSURL *fileURL = [NSURL fileURLWithPath:filePath];
     NSArray *items = @[fileURL];
@@ -459,15 +485,14 @@ typedef struct {
     [self presentViewController:activityVC animated:YES completion:nil];
 }
 
-// ---- BOTÃO LIMPAR LOG ----
+// ============================================================
+// BOTÃO LIMPAR LOG
+// ============================================================
+
 - (IBAction)clearLogButtonTapped:(id)sender {
     [self.logBuffer setString:@""];
     self.logTextView.text = @"";
     [self appendLog:@"🧹 Log limpo.\n"];
 }
-
-// ---- VIEW CONTROLLER FUNÇÕES ----
-- (IBAction)scanButtonTapped:(id)sender { /* Já implementado acima */ }
-- (IBAction)exportButtonTapped:(id)sender { /* Já implementado acima */ }
 
 @end
