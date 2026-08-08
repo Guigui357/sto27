@@ -1,7 +1,5 @@
 // ================================================================
-// ViewController.m - VERSÃO QUE FUNCIONA SEM ENTITULAMENTOS
-// ================================================================
-// Usa AppleARMIO / AppleEmbeddedOS em vez de AppleSEPManager
+// ViewController.m - VERSÃO FINAL (COMPILA 100%)
 // ================================================================
 
 #import "ViewController.h"
@@ -199,16 +197,14 @@ typedef struct {
 }
 
 // ============================================================
-// LER MEMÓRIA VIA /dev/mem (FUNCIONA SEM ENTITULAMENTOS)
+// LER MEMÓRIA VIA /dev/mem
 // ============================================================
 
 - (uint8_t *)readSEPMemoryDirect {
     [self appendLog:@"📖 Lendo memória SEP via /dev/mem...\n"];
     
-    // Tenta abrir /dev/mem
     int memfd = open("/dev/mem", O_RDONLY | O_SYNC);
     if (memfd < 0) {
-        // Tenta /dev/kmem
         memfd = open("/dev/kmem", O_RDONLY | O_SYNC);
     }
     
@@ -217,7 +213,6 @@ typedef struct {
         return NULL;
     }
     
-    // Mapeia a memória SEP
     void *sepmem = mmap(NULL, SEARCH_SIZE, PROT_READ, MAP_SHARED, memfd, SEP_BASE);
     close(memfd);
     
@@ -231,7 +226,7 @@ typedef struct {
 }
 
 // ============================================================
-// LER MEMÓRIA VIA IOKit (ALTERNATIVA)
+// LER MEMÓRIA VIA IOKit
 // ============================================================
 
 - (uint8_t *)readSEPMemoryIOKit {
@@ -241,7 +236,6 @@ typedef struct {
     io_connect_t connection = 0;
     kern_return_t kr;
     
-    // Tenta AppleARMIO (mais permissivo)
     service = IOServiceGetMatchingService(
         MACH_PORT_NULL,
         IOServiceMatching("AppleARMIO")
@@ -269,7 +263,6 @@ typedef struct {
     
     [self appendLog:@"✅ Conexão IOKit aberta\n"];
     
-    // Tenta ler usando IOConnectCallMethod
     uint8_t *buffer = malloc(SEARCH_SIZE);
     if (!buffer) {
         IOServiceClose(connection);
@@ -279,7 +272,7 @@ typedef struct {
     BOOL success = YES;
     for (uint64_t offset = 0; offset < SEARCH_SIZE; offset += 0x1000) {
         uint64_t addr = SEP_BASE + offset;
-        uint32_t dataSize = 0x1000;
+        size_t dataSize = 0x1000;
         uint8_t data[0x1000];
         uint64_t output[1] = {0};
         uint32_t outCnt = 1;
@@ -325,16 +318,13 @@ typedef struct {
     
     uint8_t *sepmem = NULL;
     
-    // Tenta via /dev/mem primeiro
     sepmem = [self readSEPMemoryDirect];
     
-    // Se falhar, tenta via IOKit
     if (!sepmem) {
         [self appendLog:@"🔄 Tentando método alternativo via IOKit...\n"];
         sepmem = [self readSEPMemoryIOKit];
     }
     
-    // Último recurso: padrões hardcoded (se não conseguir ler)
     if (!sepmem) {
         [self appendLog:@"⚠️ Não foi possível ler a memória SEP\n"];
         [self appendLog:@"🔍 Usando offsets conhecidos para A15...\n"];
@@ -348,13 +338,6 @@ typedef struct {
     [self appendLog:@"🔎 Procurando padrões na memória...\n"];
     [self findPatternsInMemory:sepmem];
     
-    // Se for mmap, não libera com free
-    // Se for malloc, libera
-    if ((uintptr_t)sepmem < 0x100000000) {
-        // Verifica se é mmap ou malloc
-        // Não vamos liberar para evitar crash
-    }
-    
     [self appendLogFormat:@"\n✅ Scan completo!\n"];
     [self appendLogFormat:@"   Total de offsets encontrados: %lu\n", (unsigned long)self.offsets.count];
 }
@@ -364,7 +347,6 @@ typedef struct {
 // ============================================================
 
 - (void)useKnownOffsets {
-    // Offsets conhecidos para A15 (iOS 26)
     NSArray *knownOffsets = @[
         @{@"name": @"MPU_CTRL_WRITE", @"addr": @"0x210F08040", @"conf": @90},
         @{@"name": @"MPU_CTRL_READ", @"addr": @"0x210F08044", @"conf": @85},
@@ -380,7 +362,8 @@ typedef struct {
     
     for (NSDictionary *dict in knownOffsets) {
         OffsetCandidate candidate;
-        candidate.address = strtoull([dict[@"addr"] UTF8String], NULL, 16);
+        NSString *addrStr = dict[@"addr"];
+        candidate.address = strtoull([addrStr UTF8String], NULL, 16);
         candidate.value = 0;
         strcpy(candidate.description, [dict[@"name"] UTF8String]);
         candidate.confidence = [dict[@"conf"] intValue];
@@ -389,10 +372,10 @@ typedef struct {
         [self.offsets addObject:data];
         
         [self appendLogFormat:@"   [+] %s: %s (conhecido)\n", 
-         candidate.description, dict[@"addr"].UTF8String];
+         candidate.description, [addrStr UTF8String]];
     }
     
-    [self appendLog:@"\n📊 Total: %lu offsets conhecidos\n", (unsigned long)self.offsets.count];
+    [self appendLogFormat:@"\n📊 Total: %lu offsets conhecidos\n", (unsigned long)self.offsets.count];
     [self updateStatus:@"Offsets conhecidos carregados" color:[UIColor systemGreenColor] progress:1.0];
 }
 
