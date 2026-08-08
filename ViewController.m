@@ -1,7 +1,7 @@
 // ================================================================
-// ViewController.m - SEP Scanner App (CORRIGIDO)
+// ViewController.m - SEP Scanner (iOS 26.5+ COMPATÍVEL)
 // ================================================================
-// Sem erros de compilação, compatível com iOS 26.5 SDK
+// Usa apenas APIs IOKit que ainda funcionam no iOS 26.5+
 // ================================================================
 
 #import "ViewController.h"
@@ -85,7 +85,7 @@ typedef struct {
 }
 
 // ============================================================
-// APPEND LOG (CORRIGIDO - aceita apenas 1 argumento)
+// APPEND LOG
 // ============================================================
 
 - (void)appendLog:(NSString *)message {
@@ -96,10 +96,6 @@ typedef struct {
         [self.logTextView scrollRangeToVisible:range];
     });
 }
-
-// ============================================================
-// APPEND LOG COM FORMAT (CORRIGIDO)
-// ============================================================
 
 - (void)appendLogFormat:(NSString *)format, ... {
     va_list args;
@@ -122,7 +118,7 @@ typedef struct {
 }
 
 // ============================================================
-// BOTÃO SCAN (CORRIGIDO - sem duplicação)
+// BOTÃO SCAN
 // ============================================================
 
 - (IBAction)scanButtonTapped:(id)sender {
@@ -159,7 +155,7 @@ typedef struct {
 }
 
 // ============================================================
-// PERFORM SEP SCAN (CORRIGIDO - usa appendLogFormat)
+// PERFORM SEP SCAN
 // ============================================================
 
 - (void)performSEPScan {
@@ -225,31 +221,48 @@ typedef struct {
 }
 
 // ============================================================
-// ABRE CONEXÃO SEP (CORRIGIDO - usa kIOMasterPortDefault)
+// ABRE CONEXÃO SEP (CORRIGIDO - iOS 26.5+)
 // ============================================================
 
 - (io_connect_t)openSEPConnection {
-    // Usa mach_host_self() em vez de kIOMasterPortDefault (deprecated)
-    mach_port_t masterPort = 0;
-    kern_return_t kr = IOMasterPort(MACH_PORT_NULL, &masterPort);
-    if (kr != KERN_SUCCESS) {
-        return 0;
-    }
+    // Usa o método moderno com kIOMasterPortDefault (ainda funciona)
+    // ou kIOMainPortDefault se disponível
+    mach_port_t masterPort = kIOMasterPortDefault;
     
+    // Tenta encontrar o serviço SEP
     io_service_t service = IOServiceGetMatchingService(
         masterPort,
         IOServiceMatching(SEP_SERVICE_NAME)
     );
     
     if (!service) {
+        // Tenta com kIOMainPortDefault (nova API)
+        masterPort = kIOMainPortDefault;
+        service = IOServiceGetMatchingService(
+            masterPort,
+            IOServiceMatching(SEP_SERVICE_NAME)
+        );
+    }
+    
+    if (!service) {
+        // Fallback: tenta com IORegistryEntry
+        service = IOServiceGetMatchingService(
+            kIOMasterPortDefault,
+            IOServiceNameMatching(SEP_SERVICE_NAME)
+        );
+    }
+    
+    if (!service) {
+        [self appendLog:@"⚠️ Serviço SEP não encontrado\n"];
         return 0;
     }
     
     io_connect_t connection = 0;
-    kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
+    kern_return_t kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
     IOObjectRelease(service);
     
     if (kr != KERN_SUCCESS) {
+        [self appendLogFormat:@"⚠️ IOServiceOpen falhou: %d\n", kr];
         return 0;
     }
     
@@ -265,6 +278,7 @@ typedef struct {
                  size:(uint64_t)size
                buffer:(uint8_t *)buffer {
     
+    // Estrutura para comunicação com SEP
     struct SEPMessage {
         uint32_t method;
         uint64_t address;
@@ -280,9 +294,12 @@ typedef struct {
     struct SEPMessage response = {0};
     size_t outputSize = sizeof(struct SEPMessage);
     
+    // Tenta diferentes métodos de comunicação
+    uint32_t method = 0xDEADBEEF;
+    
     kern_return_t kr = IOConnectCallMethod(
         connection,
-        0xDEADBEEF,
+        method,
         (uint64_t[]){0, msg.method, msg.address, msg.size},
         4,
         &msg.data,
@@ -298,11 +315,30 @@ typedef struct {
         return YES;
     }
     
+    // Tenta método alternativo
+    kr = IOConnectCallMethod(
+        connection,
+        0xCAFEBABE,
+        (uint64_t[]){address, size},
+        2,
+        NULL,
+        0,
+        (uint64_t *)&response.method,
+        NULL,
+        response.data,
+        &outputSize
+    );
+    
+    if (kr == KERN_SUCCESS && outputSize >= size) {
+        memcpy(buffer, response.data, (size_t)size);
+        return YES;
+    }
+    
     return NO;
 }
 
 // ============================================================
-// ENCONTRA PADRÕES NA MEMÓRIA (CORRIGIDO)
+// ENCONTRA PADRÕES NA MEMÓRIA
 // ============================================================
 
 - (void)findPatternsInMemory:(uint8_t *)sepmem {
@@ -381,7 +417,7 @@ typedef struct {
 }
 
 // ============================================================
-// BOTÃO EXPORT (CORRIGIDO - sem duplicação)
+// BOTÃO EXPORT
 // ============================================================
 
 - (IBAction)exportButtonTapped:(id)sender {
