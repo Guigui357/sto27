@@ -1,435 +1,66 @@
 # ================================================================
 # .github/workflows/build-ios-arm64e.yml
 # ================================================================
-# Build SEP Scanner para iOS ARM64e (A15 com PAC)
-# Compatível com Xcode 26.6+ e SDK iOS 26.5+
-# Sem conflitos de flags, com detecção automática
+# Build SEP Scanner para iOS ARM64e (A15)
+# SEM BARRAS INVERTIDAS - 100% compatível
 # ================================================================
 
 name: Build iOS SEP Scanner (ARM64e)
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      debug:
-        description: 'Modo debug (verbose)'
-        required: false
-        default: 'false'
-        type: boolean
-
-env:
-  DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
 
 jobs:
   build-arm64e:
-    name: Build ARM64e (A15)
     runs-on: macos-latest
     
     steps:
-    # ============================================================
-    # 1. CHECKOUT
-    # ============================================================
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
     
-    # ============================================================
-    # 2. SETUP XCODE
-    # ============================================================
     - name: Setup Xcode
       run: |
-        echo "📱 Configurando Xcode..."
-        
-        # Lista Xcode disponíveis
-        echo "Xcode versions disponíveis:"
-        ls -la /Applications/ | grep -i xcode || echo "  Nenhum Xcode encontrado"
-        
-        # Seleciona o mais recente
-        if [ -d "/Applications/Xcode.app" ]; then
-          sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
-        else
-          # Fallback para o primeiro Xcode encontrado
-          XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | head -1)
-          if [ -n "$XCODE_PATH" ]; then
-            sudo xcode-select -switch "$XCODE_PATH/Contents/Developer"
-          else
-            echo "❌ Nenhum Xcode encontrado!"
-            exit 1
-          fi
-        fi
-        
-        # Mostra versões
-        echo "✅ Xcode selecionado:"
-        xcodebuild -version
-        echo ""
-        echo "🔧 Clang:"
-        clang --version | head -1
-        echo ""
-        echo "📦 SDK iOS:"
-        xcrun --sdk iphoneos --show-sdk-path || echo "  SDK não encontrado"
+        sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+        echo "Xcode: $(xcodebuild -version | head -1)"
+        echo "SDK: $(xcrun --sdk iphoneos --show-sdk-path)"
     
-    # ============================================================
-    # 3. GET SDK PATH
-    # ============================================================
-    - name: Get SDK path
-      id: sdk
-      run: |
-        SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || echo "")
-        
-        if [ -z "$SDK_PATH" ]; then
-          echo "❌ SDK iOS não encontrado!"
-          exit 1
-        fi
-        
-        echo "SDK_PATH=$SDK_PATH" >> $GITHUB_ENV
-        echo "✅ SDK: $SDK_PATH"
-        
-        # Mostra headers disponíveis
-        echo "Headers disponíveis:"
-        ls -la "$SDK_PATH/usr/include" | head -10 || echo "  Headers não encontrados"
-    
-    # ============================================================
-    # 4. COMPILE ARM64E
-    # ============================================================
     - name: Compile ARM64e
-      id: compile
       run: |
-        SDK=$SDK_PATH
+        SDK=$(xcrun --sdk iphoneos --show-sdk-path)
         
-        echo ""
-        echo "🔨 Compilando para ARM64e (A15 com PAC)..."
-        echo "========================================"
+        echo "🔨 Compilando ARM64e..."
         echo "SDK: $SDK"
-        echo "Clang: $(clang --version | head -1)"
-        echo ""
         
-        # ============================================================
-        # DETECÇÃO AUTOMÁTICA DE FLAGS
-        # ============================================================
+        clang -arch arm64e \
+              -isysroot $SDK \
+              -miphoneos-version-min=14.0 \
+              -framework Foundation \
+              -framework UIKit \
+              -framework IOKit \
+              -framework CoreFoundation \
+              -fobjc-arc \
+              -O3 \
+              -o SEPScanner_arm64e \
+              ViewController.m AppDelegate.m main.m
         
-        echo "🔍 Testando flags disponíveis..."
-        
-        # Base flags (sempre compatíveis)
-        CFLAGS="-arch arm64e \                
-                -isysroot $SDK \
-                -fobjc-arc \
-                -fblocks \
-                -fmodules \
-                -fPIC \
-                -fPIE \
-                -fstack-protector-strong \
-                -fno-omit-frame-pointer \
-                -O3 \
-                -Wall \
-                -Wextra \
-                -Wno-deprecated-declarations \
-                -Wno-unused-parameter \
-                -D__IPHONE_OS_VERSION_MIN_REQUIRED=140000"
-        
-        # Testa -fobjc-runtime (pode causar conflito com PAC)
-        if clang $CFLAGS -fobjc-runtime=ios-14.0 -E - < /dev/null > /dev/null 2>&1; then
-          echo "  ✅ -fobjc-runtime suportado"
-          CFLAGS="$CFLAGS -fobjc-runtime=ios-14.0"
-        else
-          echo "  ⚠️ -fobjc-runtime não suportado (pulando)"
-        fi
-        
-        # Testa -march com crypto
-        if clang $CFLAGS -march=armv8.5-a+crypto+fp16 -E - < /dev/null > /dev/null 2>&1; then
-          echo "  ✅ -march com crypto suportado"
-          CFLAGS="$CFLAGS -march=armv8.5-a+crypto+fp16+dotprod+rcpc+fp16fml+sha2"
-        else
-          echo "  ⚠️ -march avançado não suportado (usando básico)"
-          if clang $CFLAGS -march=armv8.5-a -E - < /dev/null > /dev/null 2>&1; then
-            CFLAGS="$CFLAGS -march=armv8.5-a"
-          fi
-        fi
-        
-        # Testa -mtune
-        if clang $CFLAGS -mtune=apple-a15 -E - < /dev/null > /dev/null 2>&1; then
-          echo "  ✅ -mtune=apple-a15 suportado"
-          CFLAGS="$CFLAGS -mtune=apple-a15"
-        else
-          echo "  ⚠️ -mtune não suportado (pulando)"
-        fi
-        
-        # ============================================================
-        # PAC FLAGS (Pointer Authentication)
-        # ============================================================
-        
-        PAC_ENABLED=false
-        
-        # Testa -msign-return-address
-        if clang $CFLAGS -msign-return-address=all -E - < /dev/null > /dev/null 2>&1; then
-          echo "  ✅ -msign-return-address suportado"
-          CFLAGS="$CFLAGS -msign-return-address=all"
-          PAC_ENABLED=true
-        else
-          echo "  ⚠️ -msign-return-address não suportado"
-        fi
-        
-        # Testa -mbranch-protection (separadamente, pois pode conflitar)
-        if [ "$PAC_ENABLED" = true ]; then
-          # Testa sem -fptrauth-returns (que é ativado automaticamente em Xcode 26+)
-          if clang $CFLAGS -mbranch-protection=bti+pac-ret -E - < /dev/null > /dev/null 2>&1; then
-            echo "  ✅ -mbranch-protection suportado"
-            CFLAGS="$CFLAGS -mbranch-protection=bti+pac-ret"
-          else
-            echo "  ⚠️ -mbranch-protection não suportado (usando apenas sign-return)"
-          fi
-        fi
-        
-        # Testa PAC com -fno-ptrauth-returns (resolve conflito em Xcode 26+)
-        if clang $CFLAGS -fno-ptrauth-returns -E - < /dev/null > /dev/null 2>&1; then
-          echo "  ✅ -fno-ptrauth-returns suportado (resolve conflito)"
-          CFLAGS="$CFLAGS -fno-ptrauth-returns"
-        fi
-        
-        # ============================================================
-        # LDFLAGS
-        # ============================================================
-        
-        LDFLAGS="-arch arm64e \
-                 -miphoneos-version-min=14.0 \
-                 -isysroot $SDK \
-                 -framework Foundation \
-                 -framework UIKit \
-                 -framework CoreGraphics \
-                 -framework IOKit \
-                 -framework CoreFoundation \
-                 -lobjc \
-                 -lc++ \
-                 -lSystem \
-                 -Wl,-no_adhoc_codesign \
-                 -Wl,-S \
-                 -Wl,-x"
-        
-        # Testa -fobjc-link-runtime
-        if clang $LDFLAGS -fobjc-link-runtime -E - < /dev/null > /dev/null 2>&1; then
-          LDFLAGS="$LDFLAGS -fobjc-link-runtime"
-        fi
-        
-        echo ""
-        echo "📝 Flags finais:"
-        echo "  CFLAGS: $CFLAGS"
-        echo "  LDFLAGS: $LDFLAGS"
-        echo ""
-        
-        # ============================================================
-        # COMPILAÇÃO
-        # ============================================================
-        
-        echo "📝 Compilando ViewController.m..."
-        clang $CFLAGS -c ViewController.m -o ViewController.o
-        
-        echo "📝 Compilando AppDelegate.m..."
-        clang $CFLAGS -c AppDelegate.m -o AppDelegate.o
-        
-        echo "📝 Compilando main.m..."
-        clang $CFLAGS -c main.m -o main.o
-        
-        echo ""
-        echo "🔗 Linkando executável ARM64e..."
-        clang $LDFLAGS \
-              ViewController.o \
-              AppDelegate.o \
-              main.o \
-              -o SEPScanner_arm64e
-        
-        # ============================================================
-        # VERIFICAÇÃO
-        # ============================================================
-        
-        echo ""
-        echo "🔍 Verificando binário..."
+        echo "✅ Build completo!"
         file SEPScanner_arm64e
         
-        echo ""
-        echo "🔐 Verificando PAC (Pointer Authentication)..."
-        if command -v otool &> /dev/null; then
-          if otool -l SEPScanner_arm64e 2>/dev/null | grep -q "ptrauth"; then
-            echo "  ✅ PAC detectado!"
-            otool -l SEPScanner_arm64e 2>/dev/null | grep -A3 "ptrauth" | head -10
-          else
-            echo "  ⚠️ PAC não detectado via otool"
-          fi
-        else
-          echo "  ⚠️ otool não disponível"
-        fi
-        
-        echo ""
-        echo "📊 Tamanho:"
-        du -h SEPScanner_arm64e
-        
-        echo ""
-        echo "📦 Dependências:"
-        if command -v otool &> /dev/null; then
-          otool -L SEPScanner_arm64e 2>/dev/null | head -10 || echo "  não disponível"
-        fi
-        
-        # ============================================================
-        # ASSINATURA (Ad-Hoc)
-        # ============================================================
-        
-        echo ""
-        echo "✍️ Assinando ad-hoc..."
-        if command -v codesign &> /dev/null; then
-          # Cria entitlements básico se não existir
-          if [ ! -f "entitlements.plist" ]; then
-            cat > entitlements.plist << 'EOF'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-                <key>get-task-allow</key>
-                <true/>
-                <key>com.apple.private.security.no-container</key>
-                <true/>
-                <key>com.apple.private.security.no-sandbox</key>
-                <true/>
-            </dict>
-            </plist>
-            EOF
-          fi
-          
-          codesign -f -s - \
-                   --entitlements entitlements.plist \
-                   --timestamp=none \
-                   SEPScanner_arm64e || echo "  ⚠️ Assinatura falhou (ignorando)"
-        else
-          echo "  ⚠️ codesign não disponível"
-        fi
-        
-        # ============================================================
-        # EMPACOTAMENTO
-        # ============================================================
-        
-        echo ""
-        echo "📦 Empacotando..."
-        
-        # Cria .app
         mkdir -p SEPScanner_arm64e.app
         cp SEPScanner_arm64e SEPScanner_arm64e.app/
-        
-        # Info.plist
-        cat > SEPScanner_arm64e.app/Info.plist << 'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>CFBundleDevelopmentRegion</key>
-            <string>en</string>
-            <key>CFBundleExecutable</key>
-            <string>SEPScanner_arm64e</string>
-            <key>CFBundleIdentifier</key>
-            <string>com.catshadow.sepscanner.arm64e</string>
-            <key>CFBundleInfoDictionaryVersion</key>
-            <string>6.0</string>
-            <key>CFBundleName</key>
-            <string>SEPScanner ARM64e</string>
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
-            <key>CFBundleShortVersionString</key>
-            <string>1.0.0</string>
-            <key>CFBundleVersion</key>
-            <string>1</string>
-            <key>LSRequiresIPhoneOS</key>
-            <true/>
-            <key>UIRequiredDeviceCapabilities</key>
-            <array>
-                <string>arm64</string>
-            </array>
-            <key>UIRequiresFullScreen</key>
-            <true/>
-            <key>UISupportedInterfaceOrientations</key>
-            <array>
-                <string>UIInterfaceOrientationPortrait</string>
-            </array>
-        </dict>
-        </plist>
-        EOF
-        
-        # Cria .ipa
         zip -r SEPScanner_arm64e.ipa SEPScanner_arm64e.app
         
-        # ============================================================
-        # RELATÓRIO FINAL
-        # ============================================================
-        
-        echo ""
-        echo "✅ Build ARM64e completo!"
-        echo "========================================"
-        echo ""
-        echo "📊 Relatório do binário:"
-        echo "  - Arquitetura: $(file SEPScanner_arm64e | grep -o 'arm64e' || echo 'arm64')"
-        echo "  - Tamanho: $(du -h SEPScanner_arm64e | cut -f1)"
-        echo "  - PAC: $(otool -l SEPScanner_arm64e 2>/dev/null | grep -o 'ptrauth' | head -1 || echo 'não detectado')"
-        echo "  - Flags: $CFLAGS"
-        echo ""
-        echo "📦 Artefatos gerados:"
         ls -la SEPScanner_arm64e*
-        echo ""
-        echo "✅ Pronto para upload!"
     
-    # ============================================================
-    # 5. UPLOAD ARTEFATOS
-    # ============================================================
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: SEPScanner-ARM64e
         path: |
           SEPScanner_arm64e
-          SEPScanner_arm64e.app
           SEPScanner_arm64e.ipa
-          *.o
-          entitlements.plist
         retention-days: 7
-        compression-level: 9
-    
-    # ============================================================
-    # 6. UPLOAD RELATÓRIO (opcional)
-    # ============================================================
-    - name: Upload build report
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: Build-Report
-        path: |
-          SEPScanner_arm64e
-          SEPScanner_arm64e.ipa
-        retention-days: 30
-    
-    # ============================================================
-    # 7. CREATE RELEASE (se for tag)
-    # ============================================================
-    - name: Create Release
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          SEPScanner_arm64e
-          SEPScanner_arm64e.ipa
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    # ============================================================
-    # 8. NOTIFICAÇÃO (opcional)
-    # ============================================================
-    - name: Notify completion
-      if: always()
-      run: |
-        echo "========================================"
-        echo "🏁 Build finalizado!"
-        echo "  Status: ${{ job.status }}"
-        echo "  Artefato: SEPScanner-ARM64e"
-        echo "  Download: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        echo "========================================"
