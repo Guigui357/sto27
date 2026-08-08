@@ -1,20 +1,15 @@
 // ================================================================
-// ViewController.m - SEP Scanner (iOS 26.5+ COMPATÍVEL)
-// ================================================================
-// Usa apenas kIOMainPortDefault com availability check
+// ViewController.m - Interface Programática COMPLETA
 // ================================================================
 
 #import "ViewController.h"
 #import <IOKit/IOKitLib.h>
 #import <mach/mach.h>
-#import <os/availability.h>
 
-// ---- CONSTANTES ----
 #define SEP_BASE 0x210F00000ULL
 #define SEARCH_SIZE 0x20000
 #define SEP_SERVICE_NAME "AppleSEPManager"
 
-// ---- ESTRUTURA DE OFFSET ----
 typedef struct {
     uint64_t address;
     uint64_t value;
@@ -23,11 +18,12 @@ typedef struct {
 } OffsetCandidate;
 
 @interface ViewController ()
-@property (weak, nonatomic) IBOutlet UIButton *scanButton;
-@property (weak, nonatomic) IBOutlet UIButton *exportButton;
-@property (weak, nonatomic) IBOutlet UITextView *logTextView;
-@property (weak, nonatomic) IBOutlet UILabel *statusLabel;
-@property (weak, nonatomic) IBOutlet UIProgressView *progressView;
+@property (nonatomic, strong) UIButton *scanButton;
+@property (nonatomic, strong) UIButton *exportButton;
+@property (nonatomic, strong) UIButton *clearButton;
+@property (nonatomic, strong) UITextView *logTextView;
+@property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UIProgressView *progressView;
 @property (nonatomic, strong) NSMutableArray *offsets;
 @property (nonatomic, assign) BOOL isScanning;
 @property (nonatomic, strong) NSMutableString *logBuffer;
@@ -36,11 +32,13 @@ typedef struct {
 @implementation ViewController
 
 // ============================================================
-// VIEW DID LOAD
+// VIEW DID LOAD - Cria UI programaticamente
 // ============================================================
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
     
     self.offsets = [NSMutableArray array];
     self.logBuffer = [NSMutableString string];
@@ -55,34 +53,89 @@ typedef struct {
 }
 
 // ============================================================
-// SETUP UI
+// SETUP UI PROGRAMÁTICA
 // ============================================================
 
 - (void)setupUI {
-    self.scanButton.layer.cornerRadius = 12;
-    self.scanButton.backgroundColor = [UIColor systemBlueColor];
-    [self.scanButton setTitle:@"🔍 SCAN SEP" forState:UIControlStateNormal];
-    [self.scanButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.scanButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    CGFloat padding = 16;
+    CGFloat buttonHeight = 50;
+    CGFloat screenWidth = self.view.bounds.size.width;
+    CGFloat screenHeight = self.view.bounds.size.height;
+    CGFloat yOffset = 60;
     
-    self.exportButton.layer.cornerRadius = 12;
-    self.exportButton.backgroundColor = [UIColor systemGreenColor];
-    [self.exportButton setTitle:@"📤 EXPORT HEADER" forState:UIControlStateNormal];
+    // ---- TÍTULO ----
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 40)];
+    titleLabel.text = @"🐾 SEP Scanner";
+    titleLabel.font = [UIFont boldSystemFontOfSize:28];
+    titleLabel.textAlignment = NSTextAlignmentCenter;
+    titleLabel.textColor = [UIColor labelColor];
+    [self.view addSubview:titleLabel];
+    yOffset += 50;
+    
+    // ---- STATUS LABEL ----
+    self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 24)];
+    self.statusLabel.text = @"Pronto para escanear";
+    self.statusLabel.font = [UIFont systemFontOfSize:16];
+    self.statusLabel.textAlignment = NSTextAlignmentCenter;
+    self.statusLabel.textColor = [UIColor systemBlueColor];
+    [self.view addSubview:self.statusLabel];
+    yOffset += 30;
+    
+    // ---- PROGRESS BAR ----
+    self.progressView = [[UIProgressView alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 4)];
+    self.progressView.progress = 0;
+    self.progressView.progressTintColor = [UIColor systemGreenColor];
+    [self.view addSubview:self.progressView];
+    yOffset += 20;
+    
+    // ---- SCAN BUTTON ----
+    self.scanButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.scanButton.frame = CGRectMake(padding, yOffset, screenWidth - 2*padding, buttonHeight);
+    [self.scanButton setTitle:@"🔍 SCAN SEP" forState:UIControlStateNormal];
+    self.scanButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [self.scanButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.scanButton.backgroundColor = [UIColor systemBlueColor];
+    self.scanButton.layer.cornerRadius = 12;
+    [self.scanButton addTarget:self action:@selector(scanButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.scanButton];
+    yOffset += buttonHeight + 12;
+    
+    // ---- EXPORT BUTTON ----
+    self.exportButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.exportButton.frame = CGRectMake(padding, yOffset, (screenWidth - 3*padding)/2, buttonHeight);
+    [self.exportButton setTitle:@"📤 EXPORT" forState:UIControlStateNormal];
+    self.exportButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [self.exportButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.exportButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    self.exportButton.backgroundColor = [UIColor systemGreenColor];
+    self.exportButton.layer.cornerRadius = 12;
     self.exportButton.enabled = NO;
     self.exportButton.alpha = 0.5;
+    [self.exportButton addTarget:self action:@selector(exportButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.exportButton];
     
+    // ---- CLEAR BUTTON ----
+    self.clearButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.clearButton.frame = CGRectMake(screenWidth/2 + padding/2, yOffset, (screenWidth - 3*padding)/2, buttonHeight);
+    [self.clearButton setTitle:@"🧹 CLEAR" forState:UIControlStateNormal];
+    self.clearButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [self.clearButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.clearButton.backgroundColor = [UIColor systemOrangeColor];
+    self.clearButton.layer.cornerRadius = 12;
+    [self.clearButton addTarget:self action:@selector(clearLogButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.clearButton];
+    yOffset += buttonHeight + 12;
+    
+    // ---- LOG TEXT VIEW ----
+    CGFloat logHeight = screenHeight - yOffset - 30;
+    self.logTextView = [[UITextView alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, logHeight)];
+    self.logTextView.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1];
+    self.logTextView.font = [UIFont fontWithName:@"Menlo" size:11];
+    self.logTextView.editable = NO;
     self.logTextView.layer.cornerRadius = 8;
     self.logTextView.layer.borderWidth = 1;
     self.logTextView.layer.borderColor = [UIColor lightGrayColor].CGColor;
-    self.logTextView.font = [UIFont fontWithName:@"Menlo" size:12];
-    self.logTextView.editable = NO;
-    self.logTextView.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1];
-    
-    self.statusLabel.text = @"Pronto para escanear";
-    self.statusLabel.textColor = [UIColor systemBlueColor];
-    self.progressView.progress = 0;
+    self.logTextView.textContainerInset = UIEdgeInsetsMake(8, 8, 8, 8);
+    [self.view addSubview:self.logTextView];
 }
 
 // ============================================================
@@ -222,13 +275,12 @@ typedef struct {
 }
 
 // ============================================================
-// ABRE CONEXÃO SEP (CORRIGIDO - iOS 26.5+)
+// ABRE CONEXÃO SEP
 // ============================================================
 
 - (io_connect_t)openSEPConnection {
     io_service_t service = 0;
     
-    // Usa kIOMainPortDefault (iOS 15+) com fallback
     if (@available(iOS 15.0, *)) {
         service = IOServiceGetMatchingService(
             kIOMainPortDefault,
@@ -236,7 +288,6 @@ typedef struct {
         );
     }
     
-    // Fallback: tenta com IOServiceNameMatching (não precisa de port)
     if (!service) {
         service = IOServiceGetMatchingService(
             MACH_PORT_NULL,
@@ -244,7 +295,6 @@ typedef struct {
         );
     }
     
-    // Último fallback: tenta diretamente com o nome
     if (!service) {
         service = IOServiceGetMatchingService(
             0,
@@ -293,7 +343,6 @@ typedef struct {
     struct SEPMessage response = {0};
     size_t outputSize = sizeof(struct SEPMessage);
     
-    // Tenta método 1
     kern_return_t kr = IOConnectCallMethod(
         connection,
         0xDEADBEEF,
@@ -312,7 +361,6 @@ typedef struct {
         return YES;
     }
     
-    // Tenta método 2
     kr = IOConnectCallMethod(
         connection,
         0xCAFEBABE,
@@ -335,7 +383,7 @@ typedef struct {
 }
 
 // ============================================================
-// ENCONTRA PADRÕES NA MEMÓRIA
+// ENCONTRA PADRÕES
 // ============================================================
 
 - (void)findPatternsInMemory:(uint8_t *)sepmem {
@@ -499,7 +547,7 @@ typedef struct {
 }
 
 // ============================================================
-// COMPARTILHA ARQUIVO (CORRIGIDO - iOS 26.5+)
+// COMPARTILHA ARQUIVO
 // ============================================================
 
 - (void)shareFile:(NSString *)filePath {
@@ -510,7 +558,6 @@ typedef struct {
                                            initWithActivityItems:items
                                            applicationActivities:nil];
     
-    // Usa UIDevice diretamente (API moderna)
     if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         activityVC.popoverPresentationController.sourceView = self.exportButton;
         activityVC.popoverPresentationController.sourceRect = self.exportButton.bounds;
