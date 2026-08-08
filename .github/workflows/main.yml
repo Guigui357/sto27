@@ -115,7 +115,8 @@ jobs:
         echo "🔍 Testando flags disponíveis..."
         
         # Base flags (sempre compatíveis)
-        CFLAGS="-arch arm64e \                -isysroot $SDK \
+        CFLAGS="-arch arm64e \                
+                -isysroot $SDK \
                 -fobjc-arc \
                 -fblocks \
                 -fmodules \
