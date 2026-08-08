@@ -115,9 +115,7 @@ jobs:
         echo "🔍 Testando flags disponíveis..."
         
         # Base flags (sempre compatíveis)
-        CFLAGS="-arch arm64e \
-                -miphoneos-version-min=14.0 \
-                -isysroot $SDK \
+        CFLAGS="-arch arm64e \                -isysroot $SDK \
                 -fobjc-arc \
                 -fblocks \
                 -fmodules \
