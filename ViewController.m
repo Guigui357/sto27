@@ -1,5 +1,8 @@
 // ================================================================
-// ViewController.m - Com TODOS os fallbacks de conexão SEP
+// ViewController.m - VERSÃO SIMPLIFICADA PARA iOS 26.5+
+// ================================================================
+// Usa APENAS APIs que existem no iOS 26.5
+// Sem host_priv_self, sem IOConnectAddRef, sem kIOMainPortDefault
 // ================================================================
 
 #import "ViewController.h"
@@ -30,6 +33,10 @@ typedef struct {
 
 @implementation ViewController
 
+// ============================================================
+// VIEW DID LOAD
+// ============================================================
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
@@ -45,7 +52,7 @@ typedef struct {
 }
 
 // ============================================================
-// SETUP UI PROGRAMÁTICA
+// SETUP UI
 // ============================================================
 
 - (void)setupUI {
@@ -190,7 +197,7 @@ typedef struct {
 }
 
 // ============================================================
-// OPEN SEP CONNECTION - COM TODOS OS FALLBACKS
+// OPEN SEP CONNECTION - APENAS APIs QUE FUNCIONAM NO iOS 26.5
 // ============================================================
 
 - (io_connect_t)openSEPConnection {
@@ -201,20 +208,22 @@ typedef struct {
     [self appendLog:@"🔍 Tentando conectar ao SEP...\n"];
     
     // ============================================================
-    // ABORDAGEM 1: Serviços comuns
+    // LISTA DE SERVIÇOS PARA TENTAR
     // ============================================================
     NSArray *serviceNames = @[
         @"AppleSEPManager",
         @"AppleSEP",
         @"AppleMobileFileIntegrity",
-        @"AppleKeyStore",
-        @"AppleFirmwareUpdate",
-        @"AppleEmbeddedSEPUserClient"
+        @"AppleKeyStore"
     ];
+    
+    // Usa MACH_PORT_NULL em vez de kIOMainPortDefault
+    // (MACH_PORT_NULL = 0, que é aceito em todas as versões)
+    mach_port_t masterPort = MACH_PORT_NULL;
     
     for (NSString *name in serviceNames) {
         service = IOServiceGetMatchingService(
-            kIOMainPortDefault,
+            masterPort,
             IOServiceMatching([name UTF8String])
         );
         
@@ -225,18 +234,18 @@ typedef struct {
     }
     
     // ============================================================
-    // ABORDAGEM 2: IORegistryEntry
+    // TENTA VIA IORegistryEntry
     // ============================================================
     if (!service) {
         [self appendLog:@"   🔍 Tentando IORegistryEntry...\n"];
         io_registry_entry_t entry = IORegistryEntryFromPath(
-            kIOMainPortDefault,
+            masterPort,
             "IOService:/AppleSEPManager"
         );
         
         if (!entry) {
             entry = IORegistryEntryFromPath(
-                kIOMainPortDefault,
+                masterPort,
                 "IOService:/AppleSEP"
             );
         }
@@ -252,104 +261,23 @@ typedef struct {
     }
     
     // ============================================================
-    // ABORDAGEM 3: host_priv
+    // FALLBACK: TENTA VÁRIOS TIPOS DE CONEXÃO
     // ============================================================
-    if (!service) {
-        [self appendLog:@"   🔍 Tentando host_priv...\n"];
-        host_priv_t host = host_priv_self();
-        service = IOServiceGetMatchingService(
-            host,
-            IOServiceMatching("AppleSEPManager")
-        );
-        
-        if (!service) {
-            service = IOServiceGetMatchingService(
-                host,
-                IOServiceMatching("AppleSEP")
-            );
-        }
-    }
-    
-    // ============================================================
-    // ABORDAGEM 4: IOKit user client
-    // ============================================================
-    if (!service) {
-        [self appendLog:@"   🔍 Tentando IOKit user client...\n"];
-        service = IOServiceGetMatchingService(
-            kIOMainPortDefault,
-            IOServiceMatching("AppleEmbeddedSEPUserClient")
-        );
-    }
-    
-    // ============================================================
-    // ABORDAGEM 5: Fallback final com 0
-    // ============================================================
-    if (!service) {
-        [self appendLog:@"   🔍 Tentando fallback final...\n"];
-        service = IOServiceGetMatchingService(
-            0,
-            IOServiceMatching("AppleSEPManager")
-        );
-        
-        if (!service) {
-            service = IOServiceGetMatchingService(
-                0,
-                IOServiceMatching("AppleSEP")
-            );
-        }
-    }
-    
-    if (!service) {
-        [self appendLog:@"❌ SEP não encontrado em nenhum serviço\n"];
-        return 0;
-    }
-    
-    // ============================================================
-    // TENTA ABRIR COM DIFERENTES TIPOS
-    // ============================================================
-    for (int type = 0; type < 4; type++) {
-        kr = IOServiceOpen(service, mach_task_self(), type, &connection);
-        if (kr == KERN_SUCCESS) {
-            [self appendLogFormat:@"   ✅ Conexão aberta com type %d\n", type];
-            IOObjectRelease(service);
-            return connection;
+    if (service) {
+        for (int type = 0; type < 4; type++) {
+            kr = IOServiceOpen(service, mach_task_self(), type, &connection);
+            if (kr == KERN_SUCCESS) {
+                [self appendLogFormat:@"   ✅ Conexão aberta com type %d\n", type];
+                IOObjectRelease(service);
+                return connection;
+            }
         }
         
-        // Tenta via IOConnectAddRef
-        kr = IOConnectAddRef(service, type, &connection);
-        if (kr == KERN_SUCCESS) {
-            [self appendLogFormat:@"   ✅ Conexão via IOConnectAddRef type %d\n", type);
-            IOObjectRelease(service);
-            return connection;
-        }
+        IOObjectRelease(service);
+        [self appendLogFormat:@"❌ IOServiceOpen falhou: %d\n", kr];
     }
     
-    IOObjectRelease(service);
-    [self appendLogFormat:@"❌ IOServiceOpen falhou: %d\n", kr];
-    
-    // ============================================================
-    // ABORDAGEM 6: IOConnectCallMethod direto (sem IOServiceOpen)
-    // ============================================================
-    [self appendLog:@"   🔍 Tentando IOConnectCallMethod direto...\n"];
-    connection = 0;
-    kr = IOConnectCallMethod(
-        service,
-        0,
-        NULL,
-        0,
-        NULL,
-        0,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-    );
-    
-    if (kr == KERN_SUCCESS) {
-        [self appendLog:@"   ✅ Conexão via IOConnectCallMethod\n"];
-        return 1; // Qualquer coisa diferente de 0 é sucesso
-    }
-    
+    [self appendLog:@"❌ SEP não encontrado\n"];
     return 0;
 }
 
@@ -382,16 +310,19 @@ typedef struct {
         return;
     }
     
-    // Tenta ler via IOConnectCallMethod
+    // Lê a memória usando IOConnectCallMethod
     BOOL readSuccess = YES;
+    uint32_t outputSize = 1024;
+    uint8_t data[1024];
+    
     for (uint64_t offset = 0; offset < SEARCH_SIZE; offset += 0x1000) {
         uint64_t addr = SEP_BASE + offset;
         
-        // Tenta método 1
+        // Tenta método 1: comando 0xDEADBEEF
         uint64_t input[4] = {0, 0xCAFEBABE, addr, 0x1000};
         uint64_t output[1] = {0};
-        size_t outputSize = 8;
-        uint8_t data[1024] = {0};
+        uint32_t outCnt = 1;
+        uint32_t dataSize = 1024;
         
         kern_return_t kr = IOConnectCallMethod(
             connection,
@@ -401,15 +332,15 @@ typedef struct {
             NULL,
             0,
             output,
-            &outputSize,
+            &outCnt,
             data,
-            &outputSize
+            &dataSize
         );
         
-        if (kr == KERN_SUCCESS && outputSize >= 0x1000) {
+        if (kr == KERN_SUCCESS && dataSize >= 0x1000) {
             memcpy(sepmem + offset, data, 0x1000);
         } else {
-            // Tenta método 2
+            // Tenta método 2: comando 0xCAFEBABE
             kr = IOConnectCallMethod(
                 connection,
                 0xCAFEBABE,
@@ -418,16 +349,16 @@ typedef struct {
                 NULL,
                 0,
                 output,
-                &outputSize,
+                &outCnt,
                 data,
-                &outputSize
+                &dataSize
             );
             
-            if (kr == KERN_SUCCESS && outputSize >= 0x1000) {
+            if (kr == KERN_SUCCESS && dataSize >= 0x1000) {
                 memcpy(sepmem + offset, data, 0x1000);
             } else {
                 readSuccess = NO;
-                [self appendLogFormat:@"⚠️ Falha ao ler 0x%016llX\n", addr];
+                [self appendLogFormat:@"⚠️ Falha ao ler 0x%016llX (kr: %d)\n", addr, kr];
                 break;
             }
         }
