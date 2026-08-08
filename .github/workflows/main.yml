@@ -1,0 +1,202 @@
+# ================================================================
+# .github/workflows/build-ios-arm64e.yml
+# ================================================================
+# Build específico para ARM64e (A15 com PAC)
+# ================================================================
+
+name: Build iOS SEP Scanner (ARM64e)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-arm64e:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Xcode and SDK
+      run: |
+        sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+        SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+        echo "SDK_PATH=$SDK_PATH" >> $GITHUB_ENV
+        echo "📱 Xcode: $(xcodebuild -version | head -1)"
+        echo "📦 SDK: $SDK_PATH"
+        echo "🔧 Clang: $(clang --version | head -1)"
+    
+    - name: Compile for ARM64e with PAC support
+      run: |
+        SDK=$SDK_PATH
+        
+        echo "🔨 Compilando para ARM64e (A15 com PAC)..."
+        
+        # Flags específicas para ARM64e
+        CFLAGS="-arch arm64e \
+                -march=armv8.5-a+crypto+fp16+dotprod+rcpc+fp16fml+sha2 \
+                -mtune=apple-a15 \
+                -miphoneos-version-min=14.0 \
+                -isysroot $SDK \
+                -fobjc-arc \
+                -fobjc-runtime=ios-14.0 \
+                -fblocks \
+                -fmodules \
+                -fPIC \
+                -fPIE \
+                -fstack-protector-strong \
+                -fno-omit-frame-pointer \
+                -fno-strict-aliasing \
+                -O3 \
+                -Wall \
+                -Wextra \
+                -Wno-deprecated-declarations \
+                -Wno-unused-parameter \
+                -D__IPHONE_OS_VERSION_MIN_REQUIRED=140000 \
+                -D__ARM64_ARCH_8_5__ \
+                -D__ARM_FEATURE_CRYPTO=1 \
+                -D__ARM_FEATURE_SHA2=1 \
+                -D__ARM_FEATURE_FP16=1"
+        
+        # Flags de PAC (Pointer Authentication)
+        PAC_FLAGS="-msign-return-address=all \
+                   -mbranch-protection=bti+pac-ret \
+                   -march=armv8.5-a+pauth \
+                   -D__ARM_FEATURE_PAC_DEFAULT=3"
+        
+        LDFLAGS="-arch arm64e \
+                 -miphoneos-version-min=14.0 \
+                 -isysroot $SDK \
+                 -framework Foundation \
+                 -framework UIKit \
+                 -framework CoreGraphics \
+                 -framework IOKit \
+                 -framework CoreFoundation \
+                 -lobjc \
+                 -lc++ \
+                 -lSystem \
+                 -Wl,-no_adhoc_codesign \
+                 -Wl,-sectcreate,__TEXT,__info_plist,Info.plist \
+                 -Wl,-S \
+                 -Wl,-x \
+                 -Wl,-no_eh_labels"
+        
+        # Compila
+        echo "📝 Compilando ViewController.m..."
+        clang $CFLAGS $PAC_FLAGS -c ViewController.m -o ViewController.o
+        
+        echo "📝 Compilando AppDelegate.m..."
+        clang $CFLAGS $PAC_FLAGS -c AppDelegate.m -o AppDelegate.o
+        
+        echo "📝 Compilando main.m..."
+        clang $CFLAGS $PAC_FLAGS -c main.m -o main.o
+        
+        # Linka
+        echo "🔗 Linkando executável ARM64e..."
+        clang $LDFLAGS \
+              ViewController.o \
+              AppDelegate.o \
+              main.o \
+              -o SEPScanner_arm64e
+        
+        # Verifica arquitetura e flags
+        echo "🔍 Verificando binário..."
+        file SEPScanner_arm64e
+        lipo -info SEPScanner_arm64e || echo "  lipo não disponível"
+        
+        # Verifica se tem PAC
+        echo "🔐 Verificando PAC (Pointer Authentication)..."
+        otool -l SEPScanner_arm64e | grep -A5 "LC_SEGMENT_64" | head -20
+        otool -l SEPScanner_arm64e | grep "ptrauth" || echo "  Verificação manual necessária"
+        
+        # Verifica símbolos
+        nm -m SEPScanner_arm64e | head -20
+        
+        # Assina ad-hoc
+        echo "✍️ Assinando ad-hoc..."
+        codesign -f -s - \
+                 --entitlements entitlements.plist \
+                 --timestamp=none \
+                 --generate-entitlement-der \
+                 SEPScanner_arm64e
+        
+        # Empacota
+        echo "📦 Empacotando..."
+        mkdir -p SEPScanner_arm64e.app
+        cp SEPScanner_arm64e SEPScanner_arm64e.app/
+        
+        # Info.plist
+        cat > SEPScanner_arm64e.app/Info.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>SEPScanner_arm64e</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.catshadow.sepscanner.arm64e</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>SEPScanner ARM64e</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+                <string>arm64</string>
+                <string>apple-a15</string>
+            </array>
+            <key>UIRequiresFullScreen</key>
+            <true/>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+                <string>UIInterfaceOrientationPortrait</string>
+            </array>
+        </dict>
+        </plist>
+        EOF
+        
+        # Cria .ipa
+        zip -r SEPScanner_arm64e.ipa SEPScanner_arm64e.app
+        
+        # Mostra info
+        echo "✅ Build ARM64e completo!"
+        ls -la SEPScanner_arm64e*
+        
+        # Gera relatório
+        echo "📊 Relatório do binário:"
+        echo "  - Arquitetura: $(file SEPScanner_arm64e | grep -o 'arm64e')"
+        echo "  - Tamanho: $(du -h SEPScanner_arm64e | cut -f1)"
+        echo "  - PAC: $(otool -l SEPScanner_arm64e 2>/dev/null | grep -o 'ptrauth' | head -1 || echo 'não detectado')"
+    
+    - name: Upload artifacts (ARM64e)
+      uses: actions/upload-artifact@v4
+      with:
+        name: SEPScanner-ARM64e
+        path: |
+          SEPScanner_arm64e
+          SEPScanner_arm64e.app
+          SEPScanner_arm64e.ipa
+          *.o
+        retention-days: 7
+    
+    - name: Create release (ARM64e)
+      if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          SEPScanner_arm64e
+          SEPScanner_arm64e.ipa
+        generate_release_notes: true
