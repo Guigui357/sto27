@@ -1,12 +1,13 @@
 // ================================================================
 // ViewController.m - SEP Scanner (iOS 26.5+ COMPATÍVEL)
 // ================================================================
-// Usa apenas APIs IOKit que ainda funcionam no iOS 26.5+
+// Usa apenas kIOMainPortDefault com availability check
 // ================================================================
 
 #import "ViewController.h"
 #import <IOKit/IOKitLib.h>
 #import <mach/mach.h>
+#import <os/availability.h>
 
 // ---- CONSTANTES ----
 #define SEP_BASE 0x210F00000ULL
@@ -225,30 +226,29 @@ typedef struct {
 // ============================================================
 
 - (io_connect_t)openSEPConnection {
-    // Usa o método moderno com kIOMasterPortDefault (ainda funciona)
-    // ou kIOMainPortDefault se disponível
-    mach_port_t masterPort = kIOMasterPortDefault;
+    io_service_t service = 0;
     
-    // Tenta encontrar o serviço SEP
-    io_service_t service = IOServiceGetMatchingService(
-        masterPort,
-        IOServiceMatching(SEP_SERVICE_NAME)
-    );
-    
-    if (!service) {
-        // Tenta com kIOMainPortDefault (nova API)
-        masterPort = kIOMainPortDefault;
+    // Usa kIOMainPortDefault (iOS 15+) com fallback
+    if (@available(iOS 15.0, *)) {
         service = IOServiceGetMatchingService(
-            masterPort,
+            kIOMainPortDefault,
             IOServiceMatching(SEP_SERVICE_NAME)
         );
     }
     
+    // Fallback: tenta com IOServiceNameMatching (não precisa de port)
     if (!service) {
-        // Fallback: tenta com IORegistryEntry
         service = IOServiceGetMatchingService(
-            kIOMasterPortDefault,
+            MACH_PORT_NULL,
             IOServiceNameMatching(SEP_SERVICE_NAME)
+        );
+    }
+    
+    // Último fallback: tenta diretamente com o nome
+    if (!service) {
+        service = IOServiceGetMatchingService(
+            0,
+            IOServiceMatching(SEP_SERVICE_NAME)
         );
     }
     
@@ -278,7 +278,6 @@ typedef struct {
                  size:(uint64_t)size
                buffer:(uint8_t *)buffer {
     
-    // Estrutura para comunicação com SEP
     struct SEPMessage {
         uint32_t method;
         uint64_t address;
@@ -294,12 +293,10 @@ typedef struct {
     struct SEPMessage response = {0};
     size_t outputSize = sizeof(struct SEPMessage);
     
-    // Tenta diferentes métodos de comunicação
-    uint32_t method = 0xDEADBEEF;
-    
+    // Tenta método 1
     kern_return_t kr = IOConnectCallMethod(
         connection,
-        method,
+        0xDEADBEEF,
         (uint64_t[]){0, msg.method, msg.address, msg.size},
         4,
         &msg.data,
@@ -315,7 +312,7 @@ typedef struct {
         return YES;
     }
     
-    // Tenta método alternativo
+    // Tenta método 2
     kr = IOConnectCallMethod(
         connection,
         0xCAFEBABE,
@@ -502,7 +499,7 @@ typedef struct {
 }
 
 // ============================================================
-// COMPARTILHA ARQUIVO
+// COMPARTILHA ARQUIVO (CORRIGIDO - iOS 26.5+)
 // ============================================================
 
 - (void)shareFile:(NSString *)filePath {
@@ -513,7 +510,8 @@ typedef struct {
                                            initWithActivityItems:items
                                            applicationActivities:nil];
     
-    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
+    // Usa UIDevice diretamente (API moderna)
+    if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         activityVC.popoverPresentationController.sourceView = self.exportButton;
         activityVC.popoverPresentationController.sourceRect = self.exportButton.bounds;
     }
