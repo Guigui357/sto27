@@ -1,5 +1,5 @@
 // ================================================================
-// ViewController.m - Interface Programática COMPLETA
+// ViewController.m - Com TODOS os fallbacks de conexão SEP
 // ================================================================
 
 #import "ViewController.h"
@@ -8,7 +8,6 @@
 
 #define SEP_BASE 0x210F00000ULL
 #define SEARCH_SIZE 0x20000
-#define SEP_SERVICE_NAME "AppleSEPManager"
 
 typedef struct {
     uint64_t address;
@@ -31,19 +30,12 @@ typedef struct {
 
 @implementation ViewController
 
-// ============================================================
-// VIEW DID LOAD - Cria UI programaticamente
-// ============================================================
-
 - (void)viewDidLoad {
     [super viewDidLoad];
-    
     self.view.backgroundColor = [UIColor systemBackgroundColor];
-    
     self.offsets = [NSMutableArray array];
     self.logBuffer = [NSMutableString string];
     self.isScanning = NO;
-    
     [self setupUI];
     [self appendLog:@"🍟♤ CATShadow SEP Scanner App\n"];
     [self appendLog:@"   =============================\n"];
@@ -63,7 +55,6 @@ typedef struct {
     CGFloat screenHeight = self.view.bounds.size.height;
     CGFloat yOffset = 60;
     
-    // ---- TÍTULO ----
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 40)];
     titleLabel.text = @"🐾 SEP Scanner";
     titleLabel.font = [UIFont boldSystemFontOfSize:28];
@@ -72,7 +63,6 @@ typedef struct {
     [self.view addSubview:titleLabel];
     yOffset += 50;
     
-    // ---- STATUS LABEL ----
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 24)];
     self.statusLabel.text = @"Pronto para escanear";
     self.statusLabel.font = [UIFont systemFontOfSize:16];
@@ -81,14 +71,12 @@ typedef struct {
     [self.view addSubview:self.statusLabel];
     yOffset += 30;
     
-    // ---- PROGRESS BAR ----
     self.progressView = [[UIProgressView alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, 4)];
     self.progressView.progress = 0;
     self.progressView.progressTintColor = [UIColor systemGreenColor];
     [self.view addSubview:self.progressView];
     yOffset += 20;
     
-    // ---- SCAN BUTTON ----
     self.scanButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.scanButton.frame = CGRectMake(padding, yOffset, screenWidth - 2*padding, buttonHeight);
     [self.scanButton setTitle:@"🔍 SCAN SEP" forState:UIControlStateNormal];
@@ -100,7 +88,6 @@ typedef struct {
     [self.view addSubview:self.scanButton];
     yOffset += buttonHeight + 12;
     
-    // ---- EXPORT BUTTON ----
     self.exportButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.exportButton.frame = CGRectMake(padding, yOffset, (screenWidth - 3*padding)/2, buttonHeight);
     [self.exportButton setTitle:@"📤 EXPORT" forState:UIControlStateNormal];
@@ -113,7 +100,6 @@ typedef struct {
     [self.exportButton addTarget:self action:@selector(exportButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.exportButton];
     
-    // ---- CLEAR BUTTON ----
     self.clearButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.clearButton.frame = CGRectMake(screenWidth/2 + padding/2, yOffset, (screenWidth - 3*padding)/2, buttonHeight);
     [self.clearButton setTitle:@"🧹 CLEAR" forState:UIControlStateNormal];
@@ -125,7 +111,6 @@ typedef struct {
     [self.view addSubview:self.clearButton];
     yOffset += buttonHeight + 12;
     
-    // ---- LOG TEXT VIEW ----
     CGFloat logHeight = screenHeight - yOffset - 30;
     self.logTextView = [[UITextView alloc] initWithFrame:CGRectMake(padding, yOffset, screenWidth - 2*padding, logHeight)];
     self.logTextView.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1];
@@ -159,10 +144,6 @@ typedef struct {
     [self appendLog:message];
 }
 
-// ============================================================
-// UPDATE STATUS
-// ============================================================
-
 - (void)updateStatus:(NSString *)status color:(UIColor *)color progress:(float)progress {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.statusLabel.text = status;
@@ -172,7 +153,7 @@ typedef struct {
 }
 
 // ============================================================
-// BOTÃO SCAN
+// SCAN BUTTON
 // ============================================================
 
 - (IBAction)scanButtonTapped:(id)sender {
@@ -209,6 +190,170 @@ typedef struct {
 }
 
 // ============================================================
+// OPEN SEP CONNECTION - COM TODOS OS FALLBACKS
+// ============================================================
+
+- (io_connect_t)openSEPConnection {
+    io_service_t service = 0;
+    io_connect_t connection = 0;
+    kern_return_t kr;
+    
+    [self appendLog:@"🔍 Tentando conectar ao SEP...\n"];
+    
+    // ============================================================
+    // ABORDAGEM 1: Serviços comuns
+    // ============================================================
+    NSArray *serviceNames = @[
+        @"AppleSEPManager",
+        @"AppleSEP",
+        @"AppleMobileFileIntegrity",
+        @"AppleKeyStore",
+        @"AppleFirmwareUpdate",
+        @"AppleEmbeddedSEPUserClient"
+    ];
+    
+    for (NSString *name in serviceNames) {
+        service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching([name UTF8String])
+        );
+        
+        if (service) {
+            [self appendLogFormat:@"   ✅ Serviço encontrado: %@\n", name];
+            break;
+        }
+    }
+    
+    // ============================================================
+    // ABORDAGEM 2: IORegistryEntry
+    // ============================================================
+    if (!service) {
+        [self appendLog:@"   🔍 Tentando IORegistryEntry...\n"];
+        io_registry_entry_t entry = IORegistryEntryFromPath(
+            kIOMainPortDefault,
+            "IOService:/AppleSEPManager"
+        );
+        
+        if (!entry) {
+            entry = IORegistryEntryFromPath(
+                kIOMainPortDefault,
+                "IOService:/AppleSEP"
+            );
+        }
+        
+        if (entry) {
+            kr = IOServiceOpen(entry, mach_task_self(), 0, &connection);
+            IOObjectRelease(entry);
+            if (kr == KERN_SUCCESS) {
+                [self appendLog:@"   ✅ Conexão via IORegistryEntry\n"];
+                return connection;
+            }
+        }
+    }
+    
+    // ============================================================
+    // ABORDAGEM 3: host_priv
+    // ============================================================
+    if (!service) {
+        [self appendLog:@"   🔍 Tentando host_priv...\n"];
+        host_priv_t host = host_priv_self();
+        service = IOServiceGetMatchingService(
+            host,
+            IOServiceMatching("AppleSEPManager")
+        );
+        
+        if (!service) {
+            service = IOServiceGetMatchingService(
+                host,
+                IOServiceMatching("AppleSEP")
+            );
+        }
+    }
+    
+    // ============================================================
+    // ABORDAGEM 4: IOKit user client
+    // ============================================================
+    if (!service) {
+        [self appendLog:@"   🔍 Tentando IOKit user client...\n"];
+        service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("AppleEmbeddedSEPUserClient")
+        );
+    }
+    
+    // ============================================================
+    // ABORDAGEM 5: Fallback final com 0
+    // ============================================================
+    if (!service) {
+        [self appendLog:@"   🔍 Tentando fallback final...\n"];
+        service = IOServiceGetMatchingService(
+            0,
+            IOServiceMatching("AppleSEPManager")
+        );
+        
+        if (!service) {
+            service = IOServiceGetMatchingService(
+                0,
+                IOServiceMatching("AppleSEP")
+            );
+        }
+    }
+    
+    if (!service) {
+        [self appendLog:@"❌ SEP não encontrado em nenhum serviço\n"];
+        return 0;
+    }
+    
+    // ============================================================
+    // TENTA ABRIR COM DIFERENTES TIPOS
+    // ============================================================
+    for (int type = 0; type < 4; type++) {
+        kr = IOServiceOpen(service, mach_task_self(), type, &connection);
+        if (kr == KERN_SUCCESS) {
+            [self appendLogFormat:@"   ✅ Conexão aberta com type %d\n", type];
+            IOObjectRelease(service);
+            return connection;
+        }
+        
+        // Tenta via IOConnectAddRef
+        kr = IOConnectAddRef(service, type, &connection);
+        if (kr == KERN_SUCCESS) {
+            [self appendLogFormat:@"   ✅ Conexão via IOConnectAddRef type %d\n", type);
+            IOObjectRelease(service);
+            return connection;
+        }
+    }
+    
+    IOObjectRelease(service);
+    [self appendLogFormat:@"❌ IOServiceOpen falhou: %d\n", kr];
+    
+    // ============================================================
+    // ABORDAGEM 6: IOConnectCallMethod direto (sem IOServiceOpen)
+    // ============================================================
+    [self appendLog:@"   🔍 Tentando IOConnectCallMethod direto...\n"];
+    connection = 0;
+    kr = IOConnectCallMethod(
+        service,
+        0,
+        NULL,
+        0,
+        NULL,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    );
+    
+    if (kr == KERN_SUCCESS) {
+        [self appendLog:@"   ✅ Conexão via IOConnectCallMethod\n"];
+        return 1; // Qualquer coisa diferente de 0 é sucesso
+    }
+    
+    return 0;
+}
+
+// ============================================================
 // PERFORM SEP SCAN
 // ============================================================
 
@@ -237,14 +382,54 @@ typedef struct {
         return;
     }
     
+    // Tenta ler via IOConnectCallMethod
     BOOL readSuccess = YES;
     for (uint64_t offset = 0; offset < SEARCH_SIZE; offset += 0x1000) {
         uint64_t addr = SEP_BASE + offset;
         
-        if (![self readSEPMemory:connection address:addr size:0x1000 buffer:sepmem + offset]) {
-            readSuccess = NO;
-            [self appendLogFormat:@"⚠️ Falha ao ler 0x%016llX\n", addr];
-            break;
+        // Tenta método 1
+        uint64_t input[4] = {0, 0xCAFEBABE, addr, 0x1000};
+        uint64_t output[1] = {0};
+        size_t outputSize = 8;
+        uint8_t data[1024] = {0};
+        
+        kern_return_t kr = IOConnectCallMethod(
+            connection,
+            0xDEADBEEF,
+            input,
+            4,
+            NULL,
+            0,
+            output,
+            &outputSize,
+            data,
+            &outputSize
+        );
+        
+        if (kr == KERN_SUCCESS && outputSize >= 0x1000) {
+            memcpy(sepmem + offset, data, 0x1000);
+        } else {
+            // Tenta método 2
+            kr = IOConnectCallMethod(
+                connection,
+                0xCAFEBABE,
+                (uint64_t[]){addr, 0x1000},
+                2,
+                NULL,
+                0,
+                output,
+                &outputSize,
+                data,
+                &outputSize
+            );
+            
+            if (kr == KERN_SUCCESS && outputSize >= 0x1000) {
+                memcpy(sepmem + offset, data, 0x1000);
+            } else {
+                readSuccess = NO;
+                [self appendLogFormat:@"⚠️ Falha ao ler 0x%016llX\n", addr];
+                break;
+            }
         }
         
         float progress = 0.3 + (0.5 * ((float)offset / SEARCH_SIZE));
@@ -275,115 +460,7 @@ typedef struct {
 }
 
 // ============================================================
-// ABRE CONEXÃO SEP
-// ============================================================
-
-- (io_connect_t)openSEPConnection {
-    io_service_t service = 0;
-    
-    if (@available(iOS 15.0, *)) {
-        service = IOServiceGetMatchingService(
-            kIOMainPortDefault,
-            IOServiceMatching(SEP_SERVICE_NAME)
-        );
-    }
-    
-    if (!service) {
-        service = IOServiceGetMatchingService(
-            MACH_PORT_NULL,
-            IOServiceNameMatching(SEP_SERVICE_NAME)
-        );
-    }
-    
-    if (!service) {
-        service = IOServiceGetMatchingService(
-            0,
-            IOServiceMatching(SEP_SERVICE_NAME)
-        );
-    }
-    
-    if (!service) {
-        [self appendLog:@"⚠️ Serviço SEP não encontrado\n"];
-        return 0;
-    }
-    
-    io_connect_t connection = 0;
-    kern_return_t kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
-    IOObjectRelease(service);
-    
-    if (kr != KERN_SUCCESS) {
-        [self appendLogFormat:@"⚠️ IOServiceOpen falhou: %d\n", kr];
-        return 0;
-    }
-    
-    return connection;
-}
-
-// ============================================================
-// LÊ MEMÓRIA SEP
-// ============================================================
-
-- (BOOL)readSEPMemory:(io_connect_t)connection
-              address:(uint64_t)address
-                 size:(uint64_t)size
-               buffer:(uint8_t *)buffer {
-    
-    struct SEPMessage {
-        uint32_t method;
-        uint64_t address;
-        uint64_t size;
-        uint8_t data[1024];
-    };
-    
-    struct SEPMessage msg = {0};
-    msg.method = 0xCAFEBABE;
-    msg.address = address;
-    msg.size = size;
-    
-    struct SEPMessage response = {0};
-    size_t outputSize = sizeof(struct SEPMessage);
-    
-    kern_return_t kr = IOConnectCallMethod(
-        connection,
-        0xDEADBEEF,
-        (uint64_t[]){0, msg.method, msg.address, msg.size},
-        4,
-        &msg.data,
-        sizeof(struct SEPMessage),
-        (uint64_t *)&response.method,
-        NULL,
-        response.data,
-        &outputSize
-    );
-    
-    if (kr == KERN_SUCCESS && response.size == size) {
-        memcpy(buffer, response.data, (size_t)size);
-        return YES;
-    }
-    
-    kr = IOConnectCallMethod(
-        connection,
-        0xCAFEBABE,
-        (uint64_t[]){address, size},
-        2,
-        NULL,
-        0,
-        (uint64_t *)&response.method,
-        NULL,
-        response.data,
-        &outputSize
-    );
-    
-    if (kr == KERN_SUCCESS && outputSize >= size) {
-        memcpy(buffer, response.data, (size_t)size);
-        return YES;
-    }
-    
-    return NO;
-}
-
-// ============================================================
-// ENCONTRA PADRÕES
+// FIND PATTERNS
 // ============================================================
 
 - (void)findPatternsInMemory:(uint8_t *)sepmem {
@@ -462,7 +539,7 @@ typedef struct {
 }
 
 // ============================================================
-// BOTÃO EXPORT
+// EXPORT BUTTON
 // ============================================================
 
 - (IBAction)exportButtonTapped:(id)sender {
@@ -531,7 +608,6 @@ typedef struct {
         [self appendLogFormat:@"❌ Erro ao salvar: %@\n", error.localizedDescription];
     } else {
         [self appendLogFormat:@"✅ Header salvo em: %@\n", filePath];
-        
         [self appendLog:@"\n--- PREVIEW DO HEADER ---\n"];
         NSArray *lines = [header componentsSeparatedByString:@"\n"];
         NSUInteger maxLines = MIN(20, lines.count);
@@ -541,34 +617,22 @@ typedef struct {
         if (lines.count > 20) {
             [self appendLog:@"... (truncado)\n"];
         }
-        
         [self shareFile:filePath];
     }
 }
 
-// ============================================================
-// COMPARTILHA ARQUIVO
-// ============================================================
-
 - (void)shareFile:(NSString *)filePath {
     NSURL *fileURL = [NSURL fileURLWithPath:filePath];
     NSArray *items = @[fileURL];
-    
     UIActivityViewController *activityVC = [[UIActivityViewController alloc]
                                            initWithActivityItems:items
                                            applicationActivities:nil];
-    
     if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         activityVC.popoverPresentationController.sourceView = self.exportButton;
         activityVC.popoverPresentationController.sourceRect = self.exportButton.bounds;
     }
-    
     [self presentViewController:activityVC animated:YES completion:nil];
 }
-
-// ============================================================
-// BOTÃO LIMPAR LOG
-// ============================================================
 
 - (IBAction)clearLogButtonTapped:(id)sender {
     [self.logBuffer setString:@""];
